@@ -294,6 +294,14 @@ struct IntelIOMMUState {
     bool qi_enabled;                /* Set if the QI is enabled */
     uint8_t iq_last_desc_type;      /* The type of last completed descriptor */
 
+    dma_addr_t pqa;                 /* Page Request Queue Pointer */
+    uint64_t prq_head;              /* Current PRQ head */
+    uint64_t prq_tail;              /* Current PRQ tail */
+    uint8_t  prq_entry_size_order;  /* PRQ entry size in order */
+    uint64_t prq_qsize;             /* PRQ size in bytes */
+    int prq_nb_entries;             /* PRQ size in number of entries */
+    int prq_entry_count;            /* Used number of entries in PRQ */
+
     /* The index of the Fault Recording Register to be used next.
      * Wraps around from N-1 to 0, where N is the number of FRCD_REG.
      */

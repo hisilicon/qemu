@@ -3913,6 +3913,52 @@ static int vtd_handle_vcmd_write(IntelIOMMUState *s, uint64_t val)
     return 0;
 }
 
+static void vtd_handle_prs_write(IntelIOMMUState *s)
+{
+    uint32_t prs_reg = vtd_get_long_raw(s, DMAR_PRS_REG);
+    uint32_t pectl_reg = vtd_get_long_raw(s, DMAR_PECTL_REG);
+
+    if ((pectl_reg & VTD_PECTL_IP) && !(prs_reg & VTD_PRS_PPR)) {
+        vtd_set_clear_mask_long(s, DMAR_PECTL_REG, VTD_PECTL_IP, 0);
+        printf("pending completion interrupt condition serviced, "
+                    "clear IP field of PECTL_REG\n");
+    }
+}
+
+static void vtd_handle_pectl_write(IntelIOMMUState *s)
+{
+    uint32_t pectl_reg;
+    /* FIXME: when software clears the IM field, check the IP field. But do
+     * we need to compare the old value and the new value to conclude that
+     * software clears the IM field? Or just check if the IM field is zero?
+     */
+    pectl_reg = vtd_get_long_raw(s, DMAR_PECTL_REG);
+    if ((pectl_reg & VTD_PECTL_IP) && !(pectl_reg & VTD_PECTL_IM)) {
+        vtd_generate_interrupt(s, DMAR_PEADDR_REG, DMAR_PEDATA_REG);
+        vtd_set_clear_mask_long(s, DMAR_PECTL_REG, VTD_PECTL_IP, 0);
+        printf("IM field is cleared, generate "
+                    "page request event interrupt\n");
+    }
+}
+
+static void vtd_handle_pqh_write(IntelIOMMUState *s, uint64_t val)
+{
+    s->prq_head = val;
+}
+
+static void vtd_handle_pqa_write(IntelIOMMUState *s, uint64_t val)
+{
+    s->pqa = val & VTD_PQA_ADDR_MASK(s->aw_bits);
+    s->prq_head = 0;
+    s->prq_tail = 0;
+    /* per VT-d 3.0 spec, PRQ descriptor is 32 bytes */
+    s->prq_entry_size_order = 5;
+    s->prq_nb_entries = 1UL <<
+             ((val & VTD_PQA_QS_MASK) + 12 - s->prq_entry_size_order);
+    s->prq_qsize = 1ULL << ((val & VTD_PQA_QS_MASK) + 12);
+    s->prq_entry_count = 0;
+}
+
 static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
 {
     IntelIOMMUState *s = opaque;
@@ -3951,6 +3997,36 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
     case DMAR_IQA_REG_HI:
         assert(size == 4);
         val = s->iq >> 32;
+        break;
+
+    case DMAR_PQA_REG:
+        val = s->pqa | (vtd_get_quad(s, DMAR_PQA_REG) & VTD_IQA_QS);
+        if (size == 4) {
+            val = val & ((1ULL << 32) - 1);
+        }
+        break;
+
+    case DMAR_PQA_REG_HI:
+        assert(size == 4);
+        val = s->pqa >> 32;
+        break;
+
+    case DMAR_PQH_REG:
+        val = s->prq_head;
+        break;
+
+    case DMAR_PQH_REG_HI:
+        assert(size == 4);
+        val = s->prq_head >> 32;
+        break;
+
+    case DMAR_PQT_REG:
+        val = s->prq_tail;
+        break;
+
+    case DMAR_PQT_REG_HI:
+        assert(size == 4);
+        val = s->prq_tail >> 32;
         break;
 
     default:
@@ -4153,6 +4229,107 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Invalidation Event Upper Address Register, 32-bit */
     case DMAR_IEUADDR_REG:
+        assert(size == 4);
+        vtd_set_long(s, addr, val);
+        break;
+
+    /* Page Request Queue Head Register, 64-bit */
+    case DMAR_PQH_REG:
+        printf("%s, DMAR_PQH_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        if (size == 4) {
+            vtd_set_long(s, addr, val);
+        } else {
+            vtd_set_quad(s, addr, val);
+        }
+        vtd_handle_pqh_write(s, val);
+        break;
+
+    case DMAR_PQH_REG_HI:
+        printf("%s, DMAR_PQH_REG_HI write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        assert(size == 4);
+        vtd_set_long(s, addr, val);
+        /* 19:63 of PQH_REG is RsvdZ, do nothing here */
+        break;
+
+    /* Page Request Queue Tail Register, 64-bit */
+    case DMAR_PQT_REG:
+        printf("%s, DMAR_PQT_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        if (size == 4) {
+            vtd_set_long(s, addr, val);
+        } else {
+            vtd_set_quad(s, addr, val);
+        }
+        s->prq_tail = val;
+        break;
+
+    case DMAR_PQT_REG_HI:
+        printf("%s, DMAR_PQT_REG_HI write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        assert(size == 4);
+        vtd_set_long(s, addr, val);
+        /* 19:63 of PQT_REG is RsvdZ, do nothing here */
+        break;
+
+    /* Page Request Queue Address Register, 64-bit */
+    case DMAR_PQA_REG:
+        printf("%s, DMAR_PQA_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        if (size == 4) {
+            vtd_set_long(s, addr, val);
+        } else {
+            vtd_set_quad(s, addr, val);
+        }
+        vtd_handle_pqa_write(s, val);
+        break;
+
+    case DMAR_PQA_REG_HI:
+        printf("%s, DMAR_PQA_REG_HI write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        assert(size == 4);
+        vtd_set_long(s, addr, val);
+        break;
+
+    /* Page Request Status Register, 32-bit */
+    case DMAR_PRS_REG:
+        printf("%s, DMAR_PRS_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        assert(size == 4);
+        vtd_set_long(s, addr, val);
+        vtd_handle_prs_write(s);
+        break;
+
+    /* Page Request Event Control Register, 32-bit */
+    case DMAR_PECTL_REG:
+        printf("%s, DMAR_PECTL_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        assert(size == 4);
+        vtd_set_long(s, addr, val);
+        vtd_handle_pectl_write(s);
+        break;
+
+    /* Page Request Event Data Register, 32-bit */
+    case DMAR_PEDATA_REG:
+        printf("%s, DMAR_PEDATA_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        assert(size == 4);
+        vtd_set_long(s, addr, val);
+        break;
+
+    /* Page Request Event Address Register, 32-bit */
+    case DMAR_PEADDR_REG:
+        printf("%s, DMAR_PEADDR_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
+        assert(size == 4);
+        vtd_set_long(s, addr, val);
+        break;
+
+    /* Page Request Event Upper Address Register, 32-bit */
+    case DMAR_PEUADDR_REG:
+        printf("%s, DMAR_PEUADDR_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+                __func__, addr, size, val);
         assert(size == 4);
         vtd_set_long(s, addr, val);
         break;
@@ -5122,6 +5299,18 @@ static void vtd_init(IntelIOMMUState *s)
     vtd_define_long(s, DMAR_IEADDR_REG, 0, 0xfffffffcUL, 0);
     /* Treadted as RsvdZ when EIM in ECAP_REG is not supported */
     vtd_define_long(s, DMAR_IEUADDR_REG, 0, 0, 0);
+
+    /* Page Request Service registers */
+    vtd_define_quad(s, DMAR_PQH_REG, 0, 0, 0);
+    vtd_define_quad(s, DMAR_PQT_REG, 0, 0x7fff0ULL, 0);
+    vtd_define_quad(s, DMAR_PQA_REG, 0, 0xfffffffffffff007ULL, 0);
+    vtd_define_long(s, DMAR_PRS_REG, 0, 0, 0x1UL);
+    vtd_define_long(s, DMAR_PECTL_REG, 0x80000000UL, 0x80000000UL, 0);
+    vtd_define_long(s, DMAR_PEDATA_REG, 0, 0xffffffffUL, 0);
+    vtd_define_long(s, DMAR_PEADDR_REG, 0, 0xfffffffcUL, 0);
+    /* Treadted as RsvdZ when EIM in ECAP_REG is not supported */
+    vtd_define_long(s, DMAR_PEUADDR_REG, 0, 0, 0);
+
 
     /* IOTLB registers */
     vtd_define_quad(s, DMAR_IOTLB_REG, 0, 0Xb003ffff00000000ULL, 0);

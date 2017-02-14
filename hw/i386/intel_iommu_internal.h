@@ -372,6 +372,16 @@ enum {
 #define VTD_VCMD_NO_AVAILABLE_PASID    2ULL
 #define VTD_VCMD_FREE_INVALID_PASID    2ULL
 
+#define VTD_PQA_ADDR_MASK(aw)       ((VTD_HAW_MASK(aw)) ^ 0xfffULL)
+#define VTD_PQA_QS_MASK             0x7ULL
+
+/* PRS_REG */
+#define VTD_PRS_PPR                 1UL
+
+/* PECTL_REG */
+#define VTD_PECTL_IM                (1UL << 31)
+#define VTD_PECTL_IP                (1UL << 30)
+
 /* Interrupt Entry Cache Invalidation Descriptor: VT-d 6.5.2.7. */
 struct VTDInvDescIEC {
     uint32_t type:4;            /* Should always be 0x4 */
