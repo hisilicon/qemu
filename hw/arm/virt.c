@@ -56,6 +56,7 @@
 #include "hw/smbios/smbios.h"
 #include "qapi/visitor.h"
 #include "standard-headers/linux/input.h"
+#include "hw/vfio/vfio-common.h"
 
 #define DEFINE_VIRT_MACHINE_LATEST(major, minor, latest) \
     static void virt_##major##_##minor##_class_init(ObjectClass *oc, \
@@ -1225,6 +1226,79 @@ void virt_machine_done(Notifier *notifier, void *data)
     virt_build_smbios(vms);
 }
 
+static void update_memory_regions(VirtMachineState *vms, hwaddr ram_size)
+{
+
+    RAMRegion *new, *prev = NULL;
+    VFIOIovaRange *iova;
+    hwaddr virt_start = vms->memmap[VIRT_MEM].base;
+    hwaddr rem_size = ram_size;
+
+    if (QLIST_EMPTY(&vfio_iova_regions)) {
+        new = g_new(RAMRegion, 1);
+        new->base = virt_start;
+        new->size = ram_size;
+        QLIST_INSERT_HEAD(&vms->bootinfo.mem_list, new, next);
+
+        return;
+
+    }
+
+    QLIST_FOREACH(iova, &vfio_iova_regions, next) {
+        if (virt_start >= iova->end) {
+            continue;
+        }
+
+        if (virt_start < iova->start) {
+            virt_start = iova->start;
+        }
+
+        new = g_new(RAMRegion, 1);
+        new->base = virt_start;
+        new->size = MIN(iova->end - virt_start + 1, rem_size);
+        rem_size -= new->size;
+
+        if (prev) {
+            QLIST_INSERT_AFTER(prev, new, next);
+        } else {
+            QLIST_INSERT_HEAD(&vms->bootinfo.mem_list, new, next);
+        }
+
+        if (!rem_size) {
+            break;
+        }
+        prev = new;
+
+    }
+
+    if (!rem_size) {
+        error_report("mach-virt: cannot model more than %ldbytes RAM "
+                      "from the valid iova ranges", ram_size - rem_size);
+        exit(1);
+    }
+}
+
+static void create_ram_alias(VirtMachineState *vms,
+                             MemoryRegion *sysmem,
+                             MemoryRegion *ram)
+{
+    RAMRegion *reg;
+    MemoryRegion *ram_memory;
+    char *nodename;
+    hwaddr sz = 0;
+
+    QLIST_FOREACH(reg, &vms->bootinfo.mem_list, next) {
+        nodename = g_strdup_printf("ram@%" PRIx64, reg->base);
+        ram_memory = g_new(MemoryRegion, 1);
+        memory_region_init_alias(ram_memory, NULL, nodename, ram, sz,
+                                 reg->size);
+        memory_region_add_subregion(sysmem, reg->base, ram_memory);
+        sz += reg->size;
+
+        g_free(nodename);
+    }
+}
+
 static void virt_ram_memory_region_init(Notifier *notifier, void *data)
 {
     MachineState *machine = MACHINE(qdev_get_machine());
@@ -1232,10 +1306,15 @@ static void virt_ram_memory_region_init(Notifier *notifier, void *data)
     MemoryRegion *ram = g_new(MemoryRegion, 1);
     VirtMachineState *vms = container_of(notifier, VirtMachineState,
                                          ram_memory_region_init);
+    RAMRegion *first_mem_reg;
 
     memory_region_allocate_system_memory(ram, NULL, "mach-virt.ram",
                                          machine->ram_size);
-    memory_region_add_subregion(sysmem, vms->memmap[VIRT_MEM].base, ram);
+    update_memory_regions(vms, machine->ram_size);
+    create_ram_alias(vms, sysmem, ram);
+
+    first_mem_reg = QLIST_FIRST(&vms->bootinfo.mem_list);
+    vms->bootinfo.loader_start = first_mem_reg->base;
 }
 
 static uint64_t virt_cpu_mp_affinity(VirtMachineState *vms, int idx)
@@ -1458,7 +1537,6 @@ static void machvirt_init(MachineState *machine)
     vms->bootinfo.initrd_filename = machine->initrd_filename;
     vms->bootinfo.nb_cpus = smp_cpus;
     vms->bootinfo.board_id = -1;
-    vms->bootinfo.loader_start = vms->memmap[VIRT_MEM].base;
     vms->bootinfo.get_dtb = machvirt_dtb;
     vms->bootinfo.firmware_loaded = firmware_loaded;
     arm_load_kernel(ARM_CPU(first_cpu), &vms->bootinfo);
