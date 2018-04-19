@@ -1271,7 +1271,7 @@ static void update_memory_regions(VirtMachineState *vms, hwaddr ram_size)
 
     }
 
-    if (!rem_size) {
+    if (rem_size) {
         error_report("mach-virt: cannot model more than %ldbytes RAM "
                       "from the valid iova ranges", ram_size - rem_size);
         exit(1);
