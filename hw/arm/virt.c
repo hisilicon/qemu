@@ -56,6 +56,11 @@
 #include "hw/smbios/smbios.h"
 #include "qapi/visitor.h"
 #include "standard-headers/linux/input.h"
+#include "hw/vfio/vfio-common.h"
+#include "qemu/config-file.h"
+#include "monitor/qdev.h"
+#include "qapi/qmp/qstring.h"
+#include "qom/object_interfaces.h"
 
 #define DEFINE_VIRT_MACHINE_LATEST(major, minor, latest) \
     static void virt_##major##_##minor##_class_init(ObjectClass *oc, \
@@ -109,6 +114,11 @@ static ARMPlatformBusSystemParams platform_bus_params;
  */
 #define RAMLIMIT_GB 255
 #define RAMLIMIT_BYTES (RAMLIMIT_GB * 1024ULL * 1024 * 1024)
+
+/* alignments */
+#define ALIGN_1MB (1ULL << 20)
+#define ALIGN_2MB (1ULL << 21)
+#define ALIGN_1GB (1ULL << 30)
 
 /* Addresses and sizes of our components.
  * 0..128MB is space for a flash device so we can run bootrom code such as UEFI.
@@ -1225,6 +1235,227 @@ void virt_machine_done(Notifier *notifier, void *data)
     virt_build_smbios(vms);
 }
 
+static void free_iova_copy(struct vfio_iova_head *iova_copy)
+{
+    VFIOIovaRange *iova, *tmp;
+
+    QLIST_FOREACH_SAFE(iova, iova_copy, next, tmp) {
+        QLIST_REMOVE(iova, next);
+        g_free(iova);
+    }
+}
+
+static void get_iova_copy(struct vfio_iova_head *iova_copy)
+{
+    VFIOIovaRange *iova, *new, *prev_iova = NULL;
+
+    QLIST_FOREACH(iova, &vfio_iova_regions, next) {
+        new = g_malloc0(sizeof(*iova));
+        new->start = iova->start;
+        new->end = iova->end;
+
+        if (prev_iova) {
+            QLIST_INSERT_AFTER(prev_iova, new, next);
+        } else {
+            QLIST_INSERT_HEAD(iova_copy, new, next);
+        }
+        prev_iova = new;
+    }
+}
+
+static RAMRegion *alloc_ram_region(hwaddr base, hwaddr size)
+{
+    RAMRegion *new;
+
+    new = g_new(RAMRegion, 1);
+    new->base = base;
+    new->size = size;
+
+    return new;
+}
+
+static RAMRegion *find_memory_chunk(VirtMachineState *vms,
+                   struct vfio_iova_head *iova_copy, hwaddr req_size,
+                   hwaddr addr_align, hwaddr data_align, bool pcdimm)
+{
+    hwaddr virt_start = vms->memmap[VIRT_MEM].base;
+    hwaddr new_start, new_size;
+    VFIOIovaRange *iova, *tmp;
+    RAMRegion *new;
+
+    QLIST_FOREACH_SAFE(iova, iova_copy, next, tmp) {
+        if (virt_start >= iova->end) {
+            continue;
+        }
+
+        /* Align addr */
+        new_start = ROUND_UP(MAX(virt_start, iova->start), addr_align);
+        if (new_start >= iova->end) {
+            continue;
+        }
+
+        if (req_size > iova->end - new_start + 1) {
+            continue;
+        }
+
+        /*
+         * Check the region can hold any size alignment requirement.
+         * This is required if the memory is pc-dimm. ToDo: Check this
+         * is required for non pluggable cases or not.
+         */
+        new_size = QEMU_ALIGN_UP(req_size, data_align);
+
+        if ((new_start + new_size >= iova->end)) {
+            continue;
+        }
+
+        /*
+         * req_size is used to create the mem region as this will be used
+         * to create the DT memory nodes.
+         */
+        new = alloc_ram_region(new_start, req_size);
+
+        /*
+         * Modify the iova list entry for non pc-dimm case so that it
+         * is not used again for pc-dimm allocation.
+         */
+        if (!pcdimm) {
+            if (new_size - req_size) {
+                iova->start = new_start + new_size;
+            } else {
+                QLIST_REMOVE(iova, next);
+            }
+        }
+        return new;
+    }
+
+    return NULL;
+}
+
+static void update_memory_regions(VirtMachineState *vms)
+{
+    MachineState *machine = MACHINE(vms);
+    hwaddr req_size, ram_size = machine->ram_size;
+    hwaddr virt_start = vms->memmap[VIRT_MEM].base;
+    RAMRegion *first, *dimm = NULL;
+    struct vfio_iova_head iova_copy = QLIST_HEAD_INITIALIZER(iova_copy);
+
+    /* No iova regions. Use default */
+    if (QLIST_EMPTY(&vfio_iova_regions)) {
+        first = alloc_ram_region(virt_start, ram_size);
+        QLIST_INSERT_HEAD(&vms->bootinfo.mem_list, first, next);
+        return;
+    }
+
+    /* Get a copy of valid iovas and work on it */
+    get_iova_copy(&iova_copy);
+
+    /* Find the chunk for first non-pluggable memory */
+    req_size = MIN(ram_size, ALIGN_1GB);
+    first = find_memory_chunk(vms, &iova_copy, req_size, ALIGN_1GB,
+                                                  ALIGN_1MB, false);
+    if (!first) {
+        goto out;
+    }
+
+    QLIST_INSERT_HEAD(&vms->bootinfo.mem_list, first, next);
+    machine->ram_size = first->size;
+    req_size = ram_size - req_size;
+    if (!req_size) {
+        return;
+    }
+
+    /* Remaining memory is modeled as a pc-dimm. Get memory for that. */
+    dimm = find_memory_chunk(vms, &iova_copy, req_size, ALIGN_2MB,
+                                                 ALIGN_2MB, true);
+    if (!dimm) {
+        goto out;
+    }
+
+    QLIST_INSERT_AFTER(first, dimm, next);
+    machine->maxram_size = machine->ram_size + dimm->size;
+    machine->ram_slots += 1;
+
+    free_iova_copy(&iova_copy);
+    return;
+
+out:
+    free_iova_copy(&iova_copy);
+    error_report("mach-virt: Not enough contiguous memory to model more than %"
+                  PRIu64 " bytes RAM from the valid iova ranges",
+                  ram_size - req_size);
+    exit(1);
+}
+
+static void create_pcdimms(VirtMachineState *vms,
+                             MemoryRegion *sysmem,
+                             MemoryRegion *ram)
+{
+    RAMRegion *hotplug;
+    hwaddr hotplug_sz;
+    Error *local_err = NULL;
+    QDict *qdict;
+    QemuOpts *opts;
+    char *tmp;
+
+    /* Retrieve the second entry (if any) to model as pc-dimm */
+    hotplug = QLIST_NEXT(QLIST_FIRST(&vms->bootinfo.mem_list), next);
+    if (!hotplug) {
+        return;
+    }
+
+    /*Create hotplug address space */
+    vms->hotplug_memory.base = ROUND_UP(hotplug->base, 1ULL << 21);
+    hotplug_sz = ROUND_UP(hotplug->size, 1ULL << 21);
+
+    memory_region_init(&vms->hotplug_memory.mr, OBJECT(vms),
+                                      "hotplug-memory", hotplug_sz);
+    memory_region_add_subregion(sysmem, vms->hotplug_memory.base,
+                                        &vms->hotplug_memory.mr);
+    /* Create backend mem object */
+    qdict = qdict_new();
+    qdict_put_str(qdict, "qom-type", "memory-backend-ram");
+    qdict_put_str(qdict, "id", "mem1");
+    tmp = g_strdup_printf("%"PRIu64 "M", hotplug_sz / (1024 * 1024));
+    qdict_put_str(qdict, "size", tmp);
+    g_free(tmp);
+
+    opts = qemu_opts_from_qdict(qemu_find_opts("object"), qdict, &local_err);
+    if (local_err) {
+        goto err;
+    }
+
+    user_creatable_add_opts(opts, &local_err);
+    qemu_opts_del(opts);
+    QDECREF(qdict);
+    if (local_err) {
+        goto err;
+    }
+
+    /* Create pc-dimm dev*/
+    qdict = qdict_new();
+    qdict_put_str(qdict, "driver", "pc-dimm");
+    qdict_put_str(qdict, "id", "dimm1");
+    qdict_put_str(qdict, "memdev", "mem1");
+
+    opts = qemu_opts_from_qdict(qemu_find_opts("device"), qdict, &local_err);
+    if (local_err) {
+        goto err;
+    }
+
+    qdev_device_add(opts, &local_err);
+    qemu_opts_del(opts);
+    QDECREF(qdict);
+    if (local_err) {
+        goto err;
+    }
+
+    return;
+
+err:
+    error_report_err(local_err);
+    exit(1);
+}
 static void virt_ram_memory_region_init(Notifier *notifier, void *data)
 {
     MemoryRegion *sysmem = get_system_memory();
@@ -1232,10 +1463,17 @@ static void virt_ram_memory_region_init(Notifier *notifier, void *data)
     VirtMachineState *vms = container_of(notifier, VirtMachineState,
                                          ram_memory_region_init);
     MachineState *machine = MACHINE(vms);
+    RAMRegion *first_mem_reg;
 
+    update_memory_regions(vms);
     memory_region_allocate_system_memory(ram, NULL, "mach-virt.ram",
                                          machine->ram_size);
-    memory_region_add_subregion(sysmem, vms->memmap[VIRT_MEM].base, ram);
+    first_mem_reg = QLIST_FIRST(&vms->bootinfo.mem_list);
+    memory_region_add_subregion(sysmem, first_mem_reg->base, ram);
+    vms->bootinfo.loader_start = first_mem_reg->base;
+    vms->bootinfo.ram_size = machine->ram_size;
+
+    create_pcdimms(vms, sysmem, ram);
 }
 
 static uint64_t virt_cpu_mp_affinity(VirtMachineState *vms, int idx)
@@ -1452,13 +1690,11 @@ static void machvirt_init(MachineState *machine)
     vms->machine_done.notify = virt_machine_done;
     qemu_add_machine_init_done_notifier(&vms->machine_done);
 
-    vms->bootinfo.ram_size = machine->ram_size;
     vms->bootinfo.kernel_filename = machine->kernel_filename;
     vms->bootinfo.kernel_cmdline = machine->kernel_cmdline;
     vms->bootinfo.initrd_filename = machine->initrd_filename;
     vms->bootinfo.nb_cpus = smp_cpus;
     vms->bootinfo.board_id = -1;
-    vms->bootinfo.loader_start = vms->memmap[VIRT_MEM].base;
     vms->bootinfo.get_dtb = machvirt_dtb;
     vms->bootinfo.firmware_loaded = firmware_loaded;
 
@@ -1597,6 +1833,42 @@ static const CPUArchIdList *virt_possible_cpu_arch_ids(MachineState *ms)
     return ms->possible_cpus;
 }
 
+static int create_memory_fdt(VirtMachineState *vms, hwaddr addr,
+                                           hwaddr size, int node)
+{
+    void *fdt = vms->fdt;
+    char *nodename = NULL;
+    uint32_t acells, scells;
+    int rc;
+
+    acells = qemu_fdt_getprop_cell(fdt, "/", "#address-cells",
+                                   NULL, &error_fatal);
+    scells = qemu_fdt_getprop_cell(fdt, "/", "#size-cells",
+                                   NULL, &error_fatal);
+    if (acells == 0 || scells == 0) {
+        fprintf(stderr, "dtb file invalid (#address-cells or #size-cells 0)\n");
+        return -1;
+    }
+
+    nodename = g_strdup_printf("/memory@%" PRIx64, addr);
+    qemu_fdt_add_subnode(fdt, nodename);
+    qemu_fdt_setprop_string(fdt, nodename, "device_type", "memory");
+    rc = qemu_fdt_setprop_sized_cells(fdt, nodename, "reg", acells, addr,
+                                      scells, size);
+    if (rc < 0) {
+        fprintf(stderr, "couldn't set %s/reg\n", nodename);
+        goto fail;
+    }
+
+    if (nb_numa_nodes > 0) {
+        qemu_fdt_setprop_cell(fdt, nodename, "numa-node-id", node);
+    }
+
+fail:
+    g_free(nodename);
+    return rc;
+}
+
 static void virt_dimm_plug(HotplugHandler *hotplug_dev,
                          DeviceState *dev, Error **errp)
 {
@@ -1604,7 +1876,8 @@ static void virt_dimm_plug(HotplugHandler *hotplug_dev,
     PCDIMMDevice *dimm = PC_DIMM(dev);
     PCDIMMDeviceClass *ddc = PC_DIMM_GET_CLASS(dimm);
     MemoryRegion *mr;
-    uint64_t align;
+    uint64_t align, size, addr;
+    int rc, node;
     Error *local_err = NULL;
 
     mr = ddc->get_memory_region(dimm, &local_err);
@@ -1616,6 +1889,16 @@ static void virt_dimm_plug(HotplugHandler *hotplug_dev,
     pc_dimm_memory_plug(dev, &vms->hotplug_memory, mr, align, &local_err);
     if (local_err) {
         goto out;
+    }
+
+    size = memory_region_size(mr);
+    addr = object_property_get_uint(OBJECT(dimm), PC_DIMM_ADDR_PROP,
+                                                       &error_fatal);
+    node = object_property_get_uint(OBJECT(dev), PC_DIMM_NODE_PROP,
+                                                       &error_fatal);
+    rc = create_memory_fdt(vms, addr, size, node);
+    if (rc < 0) {
+        error_setg(&local_err, "Creating dt memory node entry failed");
     }
 
 out:
