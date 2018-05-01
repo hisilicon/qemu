@@ -40,6 +40,8 @@ struct vfio_group_head vfio_group_list =
     QLIST_HEAD_INITIALIZER(vfio_group_list);
 struct vfio_as_head vfio_address_spaces =
     QLIST_HEAD_INITIALIZER(vfio_address_spaces);
+struct vfio_iova_head vfio_iova_regions =
+    QLIST_HEAD_INITIALIZER(vfio_iova_regions);
 
 #ifdef CONFIG_KVM
 /*
@@ -955,6 +957,85 @@ static void vfio_put_address_space(VFIOAddressSpace *space)
     }
 }
 
+static void vfio_iommu_get_iova_ranges(struct vfio_iommu_type1_info *info)
+{
+    struct vfio_info_cap_header *hdr;
+    struct vfio_iommu_type1_info_cap_iova_range *cap_iova;
+    VFIOIovaRange *iova, *tmp, *prev = NULL;
+    void *ptr = info;
+    bool found = false;
+    int i;
+
+    if (!(info->flags & VFIO_IOMMU_INFO_CAPS)) {
+        return;
+    }
+
+    for (hdr = ptr + info->cap_offset; hdr != ptr; hdr = ptr + hdr->next) {
+        if (hdr->id == VFIO_IOMMU_TYPE1_INFO_CAP_IOVA_RANGE) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        return;
+    }
+
+    /* purge the current iova list, if any */
+    QLIST_FOREACH_SAFE(iova, &vfio_iova_regions, next, tmp) {
+        QLIST_REMOVE(iova, next);
+        g_free(iova);
+    }
+
+    cap_iova = container_of(hdr, struct vfio_iommu_type1_info_cap_iova_range,
+                            header);
+
+    /* populate the list */
+    for (i = 0; i < cap_iova->nr_iovas; i++) {
+        iova = g_malloc0(sizeof(*iova));
+        iova->start = cap_iova->iova_ranges[i].start;
+        iova->end = cap_iova->iova_ranges[i].end;
+
+        if (prev) {
+            QLIST_INSERT_AFTER(prev, iova, next);
+        } else {
+            QLIST_INSERT_HEAD(&vfio_iova_regions, iova, next);
+        }
+        prev = iova;
+    }
+
+    return;
+}
+
+static int vfio_get_iommu_info(VFIOContainer *container,
+                         struct vfio_iommu_type1_info **info)
+{
+
+    size_t argsz = sizeof(struct vfio_iommu_type1_info);
+
+
+    *info = g_malloc0(argsz);
+
+retry:
+    (*info)->argsz = argsz;
+
+    if (ioctl(container->fd, VFIO_IOMMU_GET_INFO, *info)) {
+        g_free(*info);
+        *info = NULL;
+        return -errno;
+    }
+
+    if (((*info)->argsz > argsz)) {
+        argsz = (*info)->argsz;
+        *info = g_realloc(*info, argsz);
+        goto retry;
+    }
+
+    vfio_iommu_get_iova_ranges(*info);
+
+    return 0;
+}
+
 static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
                                   Error **errp)
 {
@@ -969,6 +1050,15 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
             group->container = container;
             QLIST_INSERT_HEAD(&container->group_list, group, container_next);
             vfio_kvm_device_add_group(group);
+
+            /* New group might change the valid iovas. Get the updated list */
+            if ((container->iommu_type == VFIO_TYPE1_IOMMU) ||
+                (container->iommu_type == VFIO_TYPE1v2_IOMMU)) {
+                struct vfio_iommu_type1_info *info;
+
+                vfio_get_iommu_info(container, &info);
+                g_free(info);
+            }
             return 0;
         }
     }
@@ -994,7 +1084,7 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     if (ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_TYPE1_IOMMU) ||
         ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_TYPE1v2_IOMMU)) {
         bool v2 = !!ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_TYPE1v2_IOMMU);
-        struct vfio_iommu_type1_info info;
+        struct vfio_iommu_type1_info *info;
 
         ret = ioctl(group->fd, VFIO_GROUP_SET_CONTAINER, &fd);
         if (ret) {
@@ -1018,14 +1108,14 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
          * existing Type1 IOMMUs generally support any IOVA we're
          * going to actually try in practice.
          */
-        info.argsz = sizeof(info);
-        ret = ioctl(fd, VFIO_IOMMU_GET_INFO, &info);
+        ret = vfio_get_iommu_info(container, &info);
         /* Ignore errors */
-        if (ret || !(info.flags & VFIO_IOMMU_INFO_PGSIZES)) {
+        if (ret || !(info->flags & VFIO_IOMMU_INFO_PGSIZES)) {
             /* Assume 4k IOVA page size */
-            info.iova_pgsizes = 4096;
+            info->iova_pgsizes = 4096;
         }
-        vfio_host_win_add(container, 0, (hwaddr)-1, info.iova_pgsizes);
+        vfio_host_win_add(container, 0, (hwaddr)-1, info->iova_pgsizes);
+        g_free(info);
     } else if (ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_SPAPR_TCE_IOMMU) ||
                ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_SPAPR_TCE_v2_IOMMU)) {
         struct vfio_iommu_spapr_tce_info info;
@@ -1165,6 +1255,7 @@ static void vfio_disconnect_container(VFIOGroup *group)
     if (QLIST_EMPTY(&container->group_list)) {
         VFIOAddressSpace *space = container->space;
         VFIOGuestIOMMU *giommu, *tmp;
+        VFIOIovaRange *iova, *next_iova;
 
         vfio_listener_release(container);
         QLIST_REMOVE(container, next);
@@ -1174,6 +1265,11 @@ static void vfio_disconnect_container(VFIOGroup *group)
                     MEMORY_REGION(giommu->iommu), &giommu->n);
             QLIST_REMOVE(giommu, giommu_next);
             g_free(giommu);
+        }
+
+        QLIST_FOREACH_SAFE(iova, &vfio_iova_regions, next, next_iova) {
+            QLIST_REMOVE(iova, next);
+            g_free(iova);
         }
 
         trace_vfio_disconnect_container(container->fd);
