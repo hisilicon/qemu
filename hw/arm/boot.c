@@ -486,6 +486,27 @@ static void fdt_add_psci_node(void *fdt)
     qemu_fdt_setprop_cell(fdt, "/psci", "migrate", migrate_fn);
 }
 
+static char *create_memory_fdt(void *fdt, uint32_t acells, hwaddr mem_base,
+                                          uint32_t scells, hwaddr mem_len)
+{
+    char *nodename = NULL;
+    int rc;
+
+    nodename = g_strdup_printf("/memory@%" PRIx64, mem_base);
+    qemu_fdt_add_subnode(fdt, nodename);
+    qemu_fdt_setprop_string(fdt, nodename, "device_type", "memory");
+    rc = qemu_fdt_setprop_sized_cells(fdt, nodename, "reg", acells, mem_base,
+                                      scells, mem_len);
+    if (rc < 0) {
+        fprintf(stderr, "couldn't set %s/reg\n", nodename);
+        g_free(nodename);
+        return NULL;
+    }
+
+    return nodename;
+}
+
+
 /**
  * load_dtb() - load a device tree binary image into memory
  * @addr:       the address to load the image at
@@ -567,49 +588,63 @@ static int load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
         goto fail;
     }
 
+    /*
+     * Turn the /memory node created before into a NOP node, then create
+     * /memory@addr nodes for all numa nodes respectively.
+     */
+    qemu_fdt_nop_node(fdt, "/memory");
+
     if (nb_numa_nodes > 0) {
-        /*
-         * Turn the /memory node created before into a NOP node, then create
-         * /memory@addr nodes for all numa nodes respectively.
-         */
-        qemu_fdt_nop_node(fdt, "/memory");
+        hwaddr mem_sz;
+
         mem_base = binfo->loader_start;
+        mem_sz = binfo->ram_size;
         for (i = 0; i < nb_numa_nodes; i++) {
-            mem_len = numa_info[i].node_mem;
-            nodename = g_strdup_printf("/memory@%" PRIx64, mem_base);
-            qemu_fdt_add_subnode(fdt, nodename);
-            qemu_fdt_setprop_string(fdt, nodename, "device_type", "memory");
-            rc = qemu_fdt_setprop_sized_cells(fdt, nodename, "reg",
-                                              acells, mem_base,
+            mem_len = MIN(numa_info[i].node_mem, mem_size);
+
+            nodename = create_memory_fdt(fdt, acells, mem_base,
                                               scells, mem_len);
-            if (rc < 0) {
-                fprintf(stderr, "couldn't set %s/reg for node %d\n", nodename,
-                        i);
+            if (!nodename) {
                 goto fail;
             }
 
             qemu_fdt_setprop_cell(fdt, nodename, "numa-node-id", i);
+            g_free(nodename);
             mem_base += mem_len;
+            mem_sz -= mem_len;
+            if (!mem_sz) {
+                break;
+           }
+        }
+
+        /* Create the node for initial pc-dimm ram, if any */
+        if (binfo->dimm_mem) {
+
+            nodename = create_memory_fdt(fdt, acells, binfo->dimm_mem->base,
+                                              scells, binfo->dimm_mem->size);
+            if (!nodename) {
+                goto fail;
+            }
+            qemu_fdt_setprop_cell(fdt, nodename, "numa-node-id",
+                                                 binfo->dimm_mem->node);
             g_free(nodename);
         }
+
     } else {
-        Error *err = NULL;
 
-        rc = fdt_path_offset(fdt, "/memory");
-        if (rc < 0) {
-            qemu_fdt_add_subnode(fdt, "/memory");
-        }
-
-        if (!qemu_fdt_getprop(fdt, "/memory", "device_type", NULL, &err)) {
-            qemu_fdt_setprop_string(fdt, "/memory", "device_type", "memory");
-        }
-
-        rc = qemu_fdt_setprop_sized_cells(fdt, "/memory", "reg",
-                                          acells, binfo->loader_start,
-                                          scells, binfo->ram_size);
-        if (rc < 0) {
-            fprintf(stderr, "couldn't set /memory/reg\n");
+        nodename = create_memory_fdt(fdt, acells, binfo->loader_start,
+                                         scells, binfo->ram_size);
+        if (!nodename) {
             goto fail;
+        }
+
+        if (binfo->dimm_mem) {
+            nodename = create_memory_fdt(fdt, acells, binfo->dimm_mem->base,
+                                              scells, binfo->dimm_mem->size);
+            if (!nodename) {
+                goto fail;
+            }
+            g_free(nodename);
         }
     }
 
