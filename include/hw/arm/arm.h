@@ -48,6 +48,12 @@ typedef struct {
     ARMCPU *cpu; /* handle to the first cpu object */
 } ArmLoadKernelNotifier;
 
+struct dimm_mem_info {
+    int node;
+    hwaddr base;
+    hwaddr size;
+};
+
 /* arm_boot.c */
 struct arm_boot_info {
     uint64_t ram_size;
@@ -124,6 +130,12 @@ struct arm_boot_info {
     bool secure_board_setup;
 
     arm_endianness endianness;
+
+    /* This is used to model a pc-dimm based mem if the valid iova region
+     * is non-contiguous.
+     */
+    struct dimm_mem_info *dimm_mem;
+
 };
 
 /**
