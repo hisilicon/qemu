@@ -1366,6 +1366,7 @@ static uint64_t virt_cpu_mp_affinity(VirtMachineState *vms, int idx)
 
 static void virt_set_memmap(VirtMachineState *vms)
 {
+    MachineState *ms = MACHINE(vms);
     hwaddr base;
     int i;
 
@@ -1375,7 +1376,17 @@ static void virt_set_memmap(VirtMachineState *vms)
         vms->memmap[i] = a15memmap[i];
     }
 
-    vms->high_io_base = 256 * GiB; /* Top of the legacy initial RAM region */
+    /*
+     * We now compute the base of the high IO region depending on the
+     * amount of initial and device memory. The device memory start/size
+     * is aligned on 1GiB. We never put the high IO region below 256GiB
+     * so that if maxram_size is < 255GiB we keep the legacy memory map
+     */
+    vms->high_io_base = ROUND_UP(GiB + ms->ram_size, GiB) +
+                        ROUND_UP(ms->maxram_size - ms->ram_size, GiB);
+    if (vms->high_io_base < 256 * GiB) {
+        vms->high_io_base = 256 * GiB;
+    }
     base = vms->high_io_base;
 
     for (i = VIRT_LOWMEMMAP_LAST; i < ARRAY_SIZE(extended_memmap); i++) {
@@ -1386,6 +1397,7 @@ static void virt_set_memmap(VirtMachineState *vms)
         vms->memmap[i].size = size;
         base += size;
     }
+    vms->highest_gpa = base - 1;
 }
 
 static void machvirt_init(MachineState *machine)
@@ -1402,7 +1414,9 @@ static void machvirt_init(MachineState *machine)
     bool firmware_loaded = bios_name || drive_get(IF_PFLASH, 0, 0);
     bool aarch64 = true;
 
-    virt_set_memmap(vms);
+    if (!vms->extended_memmap) {
+        virt_set_memmap(vms);
+    }
 
     /* We can probe only here because during property set
      * KVM is not available yet
@@ -1784,6 +1798,36 @@ static HotplugHandler *virt_machine_get_hotplug_handler(MachineState *machine,
     return NULL;
 }
 
+/*
+ * for arm64 kvm_type [7-0] encodes the IPA size shift
+ */
+static int virt_kvm_type(MachineState *ms, const char *type_str)
+{
+    VirtMachineState *vms = VIRT_MACHINE(ms);
+    int max_vm_phys_shift = kvm_arm_get_max_vm_phys_shift(ms);
+    int max_pa_shift;
+
+    vms->extended_memmap = true;
+
+    virt_set_memmap(vms);
+
+    max_pa_shift = 64 - clz64(vms->highest_gpa);
+
+    if (max_pa_shift > max_vm_phys_shift) {
+        error_report("-m and ,maxmem option values "
+                     "require an IPA range (%d bits) larger than "
+                     "the one supported by the host (%d bits)",
+                     max_pa_shift, max_vm_phys_shift);
+       exit(1);
+    }
+    /*
+     * By default we return 0 which corresponds to an implicit legacy
+     * 40b IPA setting. Otherwise we return the actual requested IPA
+     * logsize
+     */
+    return max_pa_shift > 40 ? max_pa_shift : 0;
+}
+
 static void virt_machine_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
@@ -1808,6 +1852,7 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
     mc->cpu_index_to_instance_props = virt_cpu_index_to_props;
     mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a15");
     mc->get_default_cpu_node_id = virt_get_default_cpu_node_id;
+    mc->kvm_type = virt_kvm_type;
     assert(!mc->get_hotplug_handler);
     mc->get_hotplug_handler = virt_machine_get_hotplug_handler;
     hc->plug = virt_machine_device_plug_cb;
@@ -1911,6 +1956,9 @@ static void virt_machine_3_1_options(MachineClass *mc)
 {
     virt_machine_4_0_options(mc);
     compat_props_add(mc->compat_props, hw_compat_3_1, hw_compat_3_1_len);
+
+    /* extended memory map is enabled from 4.0 onwards */
+    mc->kvm_type = NULL;
 }
 DEFINE_VIRT_MACHINE(3, 1)
 
