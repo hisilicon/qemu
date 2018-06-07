@@ -208,6 +208,14 @@ bool kvm_arm_get_host_cpu_features(ARMHostCPUFeatures *ahcf);
 void kvm_arm_set_cpu_features_from_host(ARMCPU *cpu);
 
 /**
+ * kvm_arm_get_max_vm_phys_shift - Returns log2 of the max IPA size
+ * supported by KVM
+ *
+ * @ms: Machine state handle
+ */
+int kvm_arm_get_max_vm_phys_shift(MachineState *ms);
+
+/**
  * kvm_arm_sync_mpstate_to_kvm
  * @cpu: ARMCPU
  *
@@ -237,6 +245,11 @@ static inline void kvm_arm_set_cpu_features_from_host(ARMCPU *cpu)
      */
     cpu->kvm_target = QEMU_KVM_ARM_TARGET_NONE;
     cpu->host_cpu_probe_failed = true;
+}
+
+static inline int kvm_arm_get_max_vm_phys_shift(MachineState *ms)
+{
+    return -ENOENT;
 }
 
 static inline int kvm_arm_vgic_probe(void)
