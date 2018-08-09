@@ -903,6 +903,62 @@ static void smmuv3_s1_range_inval(SMMUState *s, Cmd *cmd)
     }
 }
 
+static void smmuv3_config_ste(SMMUState *bs, uint32_t sid)
+{
+#ifdef __linux__
+    IOMMUMemoryRegion *mr = smmu_iommu_mr(bs, sid);
+    SMMUEventInfo event = {.type = SMMU_EVT_NONE, .sid = sid,
+                           .inval_ste_allowed = true};
+    struct iommu_hwpt_arm_smmuv3 iommu_config = {};
+    SMMUTransCfg *cfg;
+    SMMUDevice *sdev;
+    int ret;
+
+    if (!mr) {
+        return;
+    }
+
+    sdev = container_of(mr, SMMUDevice, iommu);
+
+    /* flush QEMU config cache */
+    smmuv3_flush_config(sdev);
+
+    if (!sdev->idev || !bs->iommufd || bs->iommufd < 0) {
+        return;
+    }
+
+    cfg = smmuv3_get_config(sdev, &event);
+    if (!cfg || !cfg->s1ctxptr) {
+        smmu_iommu_uninstall_nested_ste(sdev);
+        smmuv3_flush_config(sdev);
+        return;
+    }
+
+    iommu_config.s1ctxptr = cfg->s1ctxptr;
+    iommu_config.s1cdmax = cfg->s1cdmax;
+    iommu_config.s1fmt = cfg->s1fmt;
+    iommu_config.s1dss = cfg->s1dss;
+
+    if (cfg->disabled || cfg->bypassed) {
+        iommu_config.config = IOMMU_SMMUV3_CONFIG_BYPASS;
+    } else if (cfg->aborted) {
+        iommu_config.config = IOMMU_SMMUV3_CONFIG_ABORT;
+    } else {
+        iommu_config.config = IOMMU_SMMUV3_CONFIG_TRANSLATE;
+    }
+
+    trace_smmuv3_config_ste(mr->parent_obj.name,
+                            iommu_config.config, cfg->s1ctxptr);
+
+    ret = smmu_iommu_install_nested_ste(bs, sdev, IOMMU_DEVICE_DATA_ARM_SMMUV3,
+                                        sizeof(iommu_config), &iommu_config);
+    if (ret) {
+        error_report("Unable to alloc Stage-1 HW Page Table: %d", ret);
+        return;
+    }
+#endif
+}
+
 static gboolean
 smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
 {
@@ -913,6 +969,7 @@ smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
     if (sid < sid_range->start || sid > sid_range->end) {
         return false;
     }
+    smmuv3_config_ste(sid_range->state, sid);
     trace_smmuv3_config_cache_inv(sid);
     return true;
 }
@@ -967,22 +1024,14 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_CFGI_STE:
         {
             uint32_t sid = CMD_SID(&cmd);
-            IOMMUMemoryRegion *mr = smmu_iommu_mr(bs, sid);
-            SMMUDevice *sdev;
 
             if (CMD_SSEC(&cmd)) {
                 cmd_error = SMMU_CERROR_ILL;
                 break;
             }
 
-            if (!mr) {
-                break;
-            }
-
             trace_smmuv3_cmdq_cfgi_ste(sid);
-            sdev = container_of(mr, SMMUDevice, iommu);
-            smmuv3_flush_config(sdev);
-
+            smmuv3_config_ste(bs, sid);
             break;
         }
         case SMMU_CMD_CFGI_STE_RANGE: /* same as SMMU_CMD_CFGI_ALL */
@@ -997,6 +1046,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             }
 
             mask = (1ULL << (range + 1)) - 1;
+            sid_range.state = bs;
             sid_range.start = sid & ~mask;
             sid_range.end = sid_range.start + mask;
 
