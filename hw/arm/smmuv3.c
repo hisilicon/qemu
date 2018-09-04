@@ -806,6 +806,10 @@ static void smmuv3_notify_iova(IOMMUMemoryRegion *mr,
                                uint8_t tg, uint64_t num_pages)
 {
     SMMUDevice *sdev = container_of(mr, SMMUDevice, iommu);
+    struct iommu_hwpt_invalidate_arm_smmuv3 data = {
+        .opcode = SMMU_CMD_TLBI_NH_VA,
+        .asid = asid,
+    };
     IOMMUTLBEvent event = {};
     uint8_t granule;
 
@@ -831,11 +835,18 @@ static void smmuv3_notify_iova(IOMMUMemoryRegion *mr,
         granule = tg * 2 + 10;
     }
 
+    data.granule_size = 1 << granule;
+    data.range.start = iova;
+    data.range.last = iova + num_pages * (1 << granule) - 1;
+
     event.type = IOMMU_NOTIFIER_UNMAP;
     event.entry.target_as = &address_space_memory;
     event.entry.iova = iova;
     event.entry.addr_mask = num_pages * (1 << granule) - 1;
     event.entry.perm = IOMMU_NONE;
+    event.entry.data_type = IOMMU_DEVICE_DATA_ARM_SMMUV3;
+    event.entry.data_len = sizeof(data);
+    event.entry.data = &data;
 
     memory_region_notify_iommu_one(n, &event);
 }
