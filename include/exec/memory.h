@@ -124,6 +124,9 @@ struct IOMMUTLBEntry {
     hwaddr           translated_addr;
     hwaddr           addr_mask;  /* 0xfff = 4k translation */
     IOMMUAccessFlags perm;
+    uint32_t         data_type;  /* TLB invalidation data */
+    uint32_t         data_len;
+    void            *data;
 };
 
 /*
