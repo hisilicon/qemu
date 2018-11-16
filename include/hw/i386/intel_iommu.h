@@ -42,7 +42,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(IntelIOMMUState, INTEL_IOMMU_DEVICE)
 #define VTD_SID_TO_BUS(sid)         (((sid) >> 8) & 0xff)
 #define VTD_SID_TO_DEVFN(sid)       ((sid) & 0xff)
 
-#define DMAR_REG_SIZE               0x230
+#define DMAR_REG_SIZE               0xF00
 #define VTD_HOST_AW_39BIT           39
 #define VTD_HOST_AW_48BIT           48
 #define VTD_HOST_ADDRESS_WIDTH      VTD_HOST_AW_39BIT
@@ -64,6 +64,7 @@ typedef union VTD_IR_MSIAddress VTD_IR_MSIAddress;
 typedef struct VTDPASIDDirEntry VTDPASIDDirEntry;
 typedef struct VTDPASIDEntry VTDPASIDEntry;
 typedef struct VTDIOMMUFDDevice VTDIOMMUFDDevice;
+typedef struct VTDPASIDStoreEntry VTDPASIDStoreEntry;
 
 /* Context-Entry */
 struct VTDContextEntry {
@@ -224,6 +225,12 @@ union VTD_IR_MSIAddress {
 /* When IR is enabled, all MSI/MSI-X data bits should be zero */
 #define VTD_IR_MSI_DATA          (0)
 
+struct VTDPASIDStoreEntry {
+    uint32_t gpasid;
+    uint32_t hpasid;
+    bool allocated;
+};
+
 /* The iommu (DMAR) device state struct */
 struct IntelIOMMUState {
     X86IOMMUState x86_iommu;
@@ -282,6 +289,14 @@ struct IntelIOMMUState {
     uint8_t aw_bits;                /* Host/IOVA address width (in bits) */
     bool dma_drain;                 /* Whether DMA r/w draining enabled */
 
+    /* Virtual Command Register */
+    uint64_t vccap;                 /* The value of vcmd capability reg */
+    uint64_t vcrsp;                 /* Current value of VCMD RSP REG */
+    /* /dev/iommu interface */
+    int iommufd;                    /* /dev/iommu FD */
+    bool non_identical_pasid;       /* False: guest PASID equals to host PASID */
+    uint32_t next_idx;
+    VTDPASIDStoreEntry vtd_pasid[1024][1024];
     bool cap_finalized;             /* Whether VTD capability finalized */
     /*
      * iommu_lock protects below:

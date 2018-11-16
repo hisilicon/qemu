@@ -39,6 +39,9 @@
 #include "kvm/kvm_i386.h"
 #include "migration/vmstate.h"
 #include "trace.h"
+#include <linux/iommufd.h>
+#include "hw/iommufd/iommufd.h"
+#include <sys/ioctl.h>
 
 /* context entry operations */
 #define VTD_CE_GET_RID2PASID(ce) \
@@ -2693,6 +2696,211 @@ static void vtd_handle_iectl_write(IntelIOMMUState *s)
     }
 }
 
+/* Must be called with IOMMU lock held */
+static VTDPASIDStoreEntry *vtd_pasid_find_by_idx(IntelIOMMUState *s,
+                                                 uint32_t idx)
+{
+    VTDPASIDStoreEntry *entry;
+
+    idx &= 0xfffff;
+    entry = &s->vtd_pasid[idx >> 10][idx & 0x3ff];
+
+    return entry->allocated ? entry : NULL;
+}
+
+/* Must be called with IOMMU lock held */
+static void vtd_pasid_free_idx(IntelIOMMUState *s, uint32_t idx)
+{
+    VTDPASIDStoreEntry *entry;
+
+    entry = vtd_pasid_find_by_idx(s, idx);
+    if (entry) {
+        memset(entry, 0x0, sizeof(*entry));
+    }
+}
+
+/* Must be called with IOMMU lock held */
+static VTDPASIDStoreEntry *vtd_pasid_alloc_idx(IntelIOMMUState *s)
+{
+    uint32_t idx;
+    VTDPASIDStoreEntry *entry;
+
+    idx = s->next_idx;
+    while (vtd_pasid_find_by_idx(s, idx)) {
+        if (idx == VTD_HPASID_MAX) {
+            idx = VTD_HPASID_MIN;
+        } else {
+            idx = (idx + 1) & VTD_HPASID_MAX;
+        }
+        if (idx == s->next_idx) {
+            return NULL;
+        }
+    }
+
+    entry = &s->vtd_pasid[idx >> 10][idx & 0x3ff];
+    entry->gpasid = idx;
+    entry->allocated = true;
+    s->next_idx = (idx + 1) & VTD_HPASID_MAX;
+    return entry;
+}
+
+static int __vtd_alloc_host_pasid(IntelIOMMUState *s,
+                                  bool identical, uint32_t *pasid)
+{
+    if (s->iommufd < 0) {
+        error_report("%s: No available allocation interface", __func__);
+        return -1;
+    }
+
+    return iommufd_alloc_pasid(s->iommufd, VTD_HPASID_MIN,
+                               VTD_HPASID_MAX, identical, pasid);
+}
+
+static int vtd_request_pasid_alloc(IntelIOMMUState *s, uint32_t *pasid)
+{
+    int ret;
+    VTDPASIDStoreEntry *entry = NULL;
+
+    vtd_iommu_lock(s);
+    ret = __vtd_alloc_host_pasid(s, !s->non_identical_pasid, pasid);
+    if (ret) {
+        goto out;
+    }
+
+    if (!s->non_identical_pasid) {
+        printf("Allocated identical PASID g/h: %u/%u\n", *pasid, *pasid);
+        goto out;
+    }
+
+    entry = vtd_pasid_alloc_idx(s);
+    if (entry) {
+        entry->hpasid = *pasid;
+        *pasid = entry->gpasid;
+        printf("Alloc PASID g/h: %u/%u\n", entry->gpasid, entry->hpasid);
+    } else {
+        ret = -ENOSPC;
+    }
+out:
+    vtd_iommu_unlock(s);
+    return ret;
+}
+
+static int __vtd_free_host_pasid(IntelIOMMUState *s, uint32_t pasid)
+{
+    int ret = -1;
+
+    if (s->iommufd < 0) {
+        error_report("%s: No available allocation interface", __func__);
+        return -1;
+    }
+
+    ret = iommufd_free_pasid(s->iommufd, pasid);
+    if (ret < 0) {
+        error_report("%s: free failed (%m)", __func__);
+    }
+
+    return ret;
+}
+
+static int vtd_request_pasid_free(IntelIOMMUState *s, uint32_t pasid)
+{
+    int ret;
+    VTDPASIDStoreEntry *entry = NULL;
+
+    vtd_iommu_lock(s);
+
+    /* Identical g/h pasid */
+    if (!s->non_identical_pasid) {
+        ret = __vtd_free_host_pasid(s, pasid);
+        if (!ret) {
+            printf("Freed identical PASID g/h: %u/%u\n", pasid, pasid);
+        }
+        goto out;
+    }
+
+    entry = vtd_pasid_find_by_idx(s, pasid);
+    if (!entry) {
+        ret = -ENODEV;
+        goto out;
+    }
+    ret = __vtd_free_host_pasid(s, entry->hpasid);
+    if (!ret) {
+        printf("Free PASID g/h: %u/%u\n", pasid, entry->hpasid);
+        vtd_pasid_free_idx(s, pasid);
+    }
+out:
+    vtd_iommu_unlock(s);
+
+    return ret;
+}
+
+/*
+ * If IP is not set, set it then return.
+ * If IP is already set, return.
+ */
+static void vtd_vcmd_set_ip(IntelIOMMUState *s)
+{
+    s->vcrsp = 1;
+    vtd_set_quad_raw(s, DMAR_VCRSP_REG,
+                     ((uint64_t) s->vcrsp));
+}
+
+static void vtd_vcmd_clear_ip(IntelIOMMUState *s)
+{
+    s->vcrsp &= (~((uint64_t)(0x1)));
+    vtd_set_quad_raw(s, DMAR_VCRSP_REG,
+                     ((uint64_t) s->vcrsp));
+}
+
+/* Handle write to Virtual Command Register */
+static int vtd_handle_vcmd_write(IntelIOMMUState *s, uint64_t val)
+{
+    uint32_t pasid;
+    int ret = -1;
+
+    trace_vtd_reg_write_vcmd(s->vcrsp, val);
+
+    if (!(s->vccap & VTD_VCCAP_PAS) ||
+         (s->vcrsp & 1)) {
+        return -1;
+    }
+
+    /*
+     * Since vCPU should be blocked when the guest VMCD
+     * write was trapped to here. Should be no other vCPUs
+     * try to access VCMD if guest software is well written.
+     * However, we still emulate the IP bit here in case of
+     * bad guest software. Also align with the spec.
+     */
+    vtd_vcmd_set_ip(s);
+
+    switch (val & VTD_VCMD_CMD_MASK) {
+    case VTD_VCMD_ALLOC_PASID:
+        ret = vtd_request_pasid_alloc(s, &pasid);
+        if (ret) {
+            s->vcrsp |= VTD_VCRSP_SC(VTD_VCMD_NO_AVAILABLE_PASID);
+        } else {
+            s->vcrsp |= VTD_VCRSP_RSLT(pasid);
+        }
+        break;
+
+    case VTD_VCMD_FREE_PASID:
+        pasid = VTD_VCMD_PASID_VALUE(val);
+        ret = vtd_request_pasid_free(s, pasid);
+        if (ret < 0) {
+            s->vcrsp |= VTD_VCRSP_SC(VTD_VCMD_FREE_INVALID_PASID);
+        }
+        break;
+
+    default:
+        s->vcrsp |= VTD_VCRSP_SC(VTD_VCMD_UNDEFINED_CMD);
+        error_report_once("Virtual Command: unsupported command!!!");
+        break;
+    }
+    vtd_vcmd_clear_ip(s);
+    return 0;
+}
+
 static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
 {
     IntelIOMMUState *s = opaque;
@@ -2979,6 +3187,23 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_IRTA_REG_HI:
         assert(size == 4);
         vtd_set_long(s, addr, val);
+        break;
+
+    case DMAR_VCMD_REG:
+        if (!vtd_handle_vcmd_write(s, val)) {
+            if (size == 4) {
+                vtd_set_long(s, addr, val);
+            } else {
+                vtd_set_quad(s, addr, val);
+            }
+        }
+        break;
+
+    case DMAR_VCMD_REG_HI:
+        assert(size == 4);
+        if (!vtd_handle_vcmd_write(s, val)) {
+            vtd_set_long(s, addr, val);
+        }
         break;
 
     default:
@@ -3895,6 +4120,13 @@ static void vtd_init(IntelIOMMUState *s)
      * Interrupt remapping registers.
      */
     vtd_define_quad(s, DMAR_IRTA_REG, 0, 0xfffffffffffff80fULL, 0);
+
+    /*
+     * Virtual Command Definitions
+     */
+    vtd_define_quad(s, DMAR_VCCAP_REG, s->vccap, 0, 0);
+    vtd_define_quad(s, DMAR_VCMD_REG, 0, 0xffffffffffffffffULL, 0);
+    vtd_define_quad(s, DMAR_VCRSP_REG, 0, 0, 0);
 }
 
 /* Should not reset address_spaces when reset because devices will still use
@@ -4061,7 +4293,21 @@ static void vtd_realize(DeviceState *dev, Error **errp)
                                      g_free, g_free);
     s->vtd_as_by_busptr = g_hash_table_new_full(vtd_uint64_hash, vtd_uint64_equal,
                                               g_free, g_free);
+    s->next_idx = 0;
+    s->iommufd = iommufd_get();
     vtd_init(s);
+    if (likely(!(s->ecap & VTD_ECAP_RPS))) {
+        VTDPASIDStoreEntry *entry;
+
+        vtd_iommu_lock(s);
+        entry = vtd_pasid_alloc_idx(s);
+        if (entry && entry->gpasid == 0) {
+            entry->hpasid = 0;
+        } else {
+            error_setg(errp, "Failed to reserve gPASID 0 for scalable mode");
+        }
+        vtd_iommu_unlock(s);
+    }
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, Q35_HOST_BRIDGE_IOMMU_ADDR);
     pci_setup_iommu(bus, &vtd_iommu_ops, dev);
     /* Pseudo address space under root PCI bus. */
