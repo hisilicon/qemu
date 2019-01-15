@@ -38,6 +38,7 @@
 #include "sysemu/kvm.h"
 #include "hw/intc/arm_gicv3_common.h"
 #include "hw/mem/nvdimm.h"
+#include "hw/acpi/memory_hotplug.h"
 
 #define NUM_GICV2M_SPIS       64
 #define NUM_VIRTIO_TRANSPORTS 32
@@ -131,6 +132,7 @@ typedef struct {
     uint32_t iommu_phandle;
     int psci_conduit;
     AcpiNVDIMMState acpi_nvdimm_state;
+    MemHotplugState acpi_memory_hotplug;
 } VirtMachineState;
 
 #define VIRT_ECAM_ID(high) (high ? VIRT_PCIE_ECAM_HIGH : VIRT_PCIE_ECAM)
