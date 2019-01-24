@@ -62,6 +62,7 @@
 #include "hw/mem/pc-dimm.h"
 #include "hw/mem/nvdimm.h"
 #include "hw/acpi/acpi.h"
+#include "hw/acpi/pc-hotplug.h"
 
 #define DEFINE_VIRT_MACHINE_LATEST(major, minor, latest) \
     static void virt_##major##_##minor##_class_init(ObjectClass *oc, \
@@ -1678,7 +1679,14 @@ static void machvirt_init(MachineState *machine)
         nvdimm_init_acpi_state(acpi_nvdimm_state, sysmem,
                                vms->fw_cfg, OBJECT(vms));
     }
+    if (vms->acpi_memhp_state.is_enabled) {
+        MemHotplugState *state =  &vms->acpi_memhp_state;
+        hwaddr base;
 
+        state->hw_reduced_acpi = true;
+        base = vms->memmap[VIRT_ACPI_IO].base + ACPI_MEMORY_HOTPLUG_BASE;
+        acpi_memory_hotplug_init(sysmem, OBJECT(vms), state, base);
+    }
     vms->bootinfo.ram_size = machine->ram_size;
     vms->bootinfo.kernel_filename = machine->kernel_filename;
     vms->bootinfo.kernel_cmdline = machine->kernel_cmdline;
@@ -1846,6 +1854,20 @@ static void virt_set_nvdimm_persistence(Object *obj, const char *value,
     nvdimm_state->persistence_string = g_strdup(value);
 }
 
+static bool virt_get_memhp_support(Object *obj, Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+
+    return vms->acpi_memhp_state.is_enabled;
+}
+
+static void virt_set_memhp_support(Object *obj, bool value, Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+
+    vms->acpi_memhp_state.is_enabled = value;
+}
+
 static CpuInstanceProperties
 virt_cpu_index_to_props(MachineState *ms, unsigned cpu_index)
 {
@@ -1890,8 +1912,8 @@ static void virt_memory_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     const bool is_nvdimm = object_dynamic_cast(OBJECT(dev), TYPE_NVDIMM);
     VirtMachineState *vms = VIRT_MACHINE(hotplug_dev);
 
-    if (dev->hotplugged) {
-        error_setg(errp, "memory hotplug is not supported");
+    if (dev->hotplugged && is_nvdimm) {
+        error_setg(errp, "nvdimm hotplug is not supported");
     }
 
     if (is_nvdimm && !vms->acpi_nvdimm_state.is_enabled) {
@@ -1900,6 +1922,22 @@ static void virt_memory_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     }
 
     pc_dimm_pre_plug(PC_DIMM(dev), MACHINE(hotplug_dev), NULL, errp);
+}
+
+static void virt_memhp_send_event(HotplugHandler *hotplug_dev, DeviceState *dev,
+                                  Error **errp)
+{
+    DeviceState *gpio_dev;
+    VirtMachineState *vms = VIRT_MACHINE(hotplug_dev);
+
+    gpio_dev = virt_get_gpio_dev(GPIO_PCDIMM);
+    if (!gpio_dev) {
+        error_setg(errp, "No dev interface to send hotplug event");
+        return;
+    }
+    acpi_memory_plug_cb(hotplug_dev, &vms->acpi_memhp_state,
+                        dev, errp);
+    qemu_set_irq(qdev_get_gpio_in(gpio_dev, 0), 1);
 }
 
 static void virt_memory_plug(HotplugHandler *hotplug_dev,
@@ -1918,6 +1956,10 @@ static void virt_memory_plug(HotplugHandler *hotplug_dev,
         nvdimm_plug(&vms->acpi_nvdimm_state);
     }
 
+    if (dev->hotplugged && !is_nvdimm) {
+        virt_memhp_send_event(hotplug_dev, dev, errp);
+    }
+
 out:
     error_propagate(errp, local_err);
 }
@@ -1925,6 +1967,11 @@ out:
 static void virt_memory_unplug(HotplugHandler *hotplug_dev,
                                DeviceState *dev, Error **errp)
 {
+    if (dev->hotplugged) {
+        error_setg(errp, "memory hot unplug is not supported");
+        return;
+    }
+
     pc_dimm_unplug(PC_DIMM(dev), MACHINE(hotplug_dev));
     object_unparent(OBJECT(dev));
 }
@@ -2115,6 +2162,12 @@ static void virt_instance_init(Object *obj)
     object_property_set_description(obj, "nvdimm-persistence",
                                     "Set NVDIMM persistence"
                                     "Valid values are cpu and mem-ctrl", NULL);
+
+    vms->acpi_memhp_state.is_enabled = true;
+    object_property_add_bool(obj, "memory-hotplug-support",
+                             virt_get_memhp_support,
+                             virt_set_memhp_support,
+                             NULL);
 
     vms->irqmap = a15irqmap;
 }
