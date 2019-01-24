@@ -814,6 +814,11 @@ static void create_gpio(const VirtMachineState *vms, qemu_irq *pic)
     if (vms->acpi_memhp_state.is_enabled) {
         virt_create_gpio_dev(pl061_dev, GPIO_PCDIMM);
     }
+
+    if (vms->acpi_nvdimm_state.is_enabled) {
+        virt_create_gpio_dev(pl061_dev, GPIO_NVDIMM);
+    }
+
     qemu_fdt_add_subnode(vms->fdt, "/gpio-keys");
     qemu_fdt_setprop_string(vms->fdt, "/gpio-keys", "compatible", "gpio-keys");
     qemu_fdt_setprop_cell(vms->fdt, "/gpio-keys", "#size-cells", 0);
@@ -1912,10 +1917,6 @@ static void virt_memory_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     const bool is_nvdimm = object_dynamic_cast(OBJECT(dev), TYPE_NVDIMM);
     VirtMachineState *vms = VIRT_MACHINE(hotplug_dev);
 
-    if (dev->hotplugged && is_nvdimm) {
-        error_setg(errp, "nvdimm hotplug is not supported");
-    }
-
     if (is_nvdimm && !vms->acpi_nvdimm_state.is_enabled) {
         error_setg(errp, "nvdimm is not enabled: missing 'nvdimm' in '-M'");
         return;
@@ -1925,19 +1926,25 @@ static void virt_memory_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
 }
 
 static void virt_memhp_send_event(HotplugHandler *hotplug_dev, DeviceState *dev,
-                                  Error **errp)
+                                  bool is_nvdimm, Error **errp)
 {
     DeviceState *gpio_dev;
     VirtMachineState *vms = VIRT_MACHINE(hotplug_dev);
 
-    gpio_dev = virt_get_gpio_dev(GPIO_PCDIMM);
+    gpio_dev = (is_nvdimm) ? virt_get_gpio_dev(GPIO_NVDIMM) :
+                            virt_get_gpio_dev(GPIO_PCDIMM);
     if (!gpio_dev) {
         error_setg(errp, "No dev interface to send hotplug event");
         return;
     }
-    acpi_memory_plug_cb(hotplug_dev, &vms->acpi_memhp_state,
-                        dev, errp);
-    qemu_set_irq(qdev_get_gpio_in(gpio_dev, 0), 1);
+
+    if (is_nvdimm) {
+        qemu_set_irq(qdev_get_gpio_in(gpio_dev, 0), 1);
+    } else {
+        acpi_memory_plug_cb(hotplug_dev, &vms->acpi_memhp_state,
+                            dev, errp);
+        qemu_set_irq(qdev_get_gpio_in(gpio_dev, 0), 1);
+    }
 }
 
 static void virt_memory_plug(HotplugHandler *hotplug_dev,
@@ -1956,8 +1963,8 @@ static void virt_memory_plug(HotplugHandler *hotplug_dev,
         nvdimm_plug(&vms->acpi_nvdimm_state);
     }
 
-    if (dev->hotplugged && !is_nvdimm) {
-        virt_memhp_send_event(hotplug_dev, dev, errp);
+    if (dev->hotplugged) {
+        virt_memhp_send_event(hotplug_dev, dev, is_nvdimm, errp);
     }
 
 out:
