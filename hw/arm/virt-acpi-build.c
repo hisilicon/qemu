@@ -40,6 +40,7 @@
 #include "hw/loader.h"
 #include "hw/hw.h"
 #include "hw/acpi/aml-build.h"
+#include "hw/acpi/memory_hotplug.h"
 #include "hw/pci/pcie_host.h"
 #include "hw/pci/pci.h"
 #include "hw/arm/virt.h"
@@ -327,8 +328,10 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap,
 }
 
 static void acpi_dsdt_add_gpio(Aml *scope, const MemMapEntry *gpio_memmap,
-                                           uint32_t gpio_irq)
+                               uint32_t gpio_irq, VirtMachineState *vms)
 {
+    uint32_t pin_list[1];
+
     Aml *dev = aml_device("GPO0");
     aml_append(dev, aml_name_decl("_HID", aml_string("ARMH0061")));
     aml_append(dev, aml_name_decl("_ADR", aml_int(0)));
@@ -342,11 +345,21 @@ static void acpi_dsdt_add_gpio(Aml *scope, const MemMapEntry *gpio_memmap,
     aml_append(dev, aml_name_decl("_CRS", crs));
 
     Aml *aei = aml_resource_template();
-    /* Pin 3 for power button */
-    const uint32_t pin_list[1] = {3};
+
+    /* GPIO Interrupt connection descriptor for power button */
+    pin_list[0] = GPIO_PWRB;
     aml_append(aei, aml_gpio_int(AML_CONSUMER, AML_EDGE, AML_ACTIVE_HIGH,
                                  AML_EXCLUSIVE, AML_PULL_UP, 0, pin_list, 1,
                                  "GPO0", NULL, 0));
+
+    if (vms->acpi_memhp_state.is_enabled) {
+        /* GPIO Interrupt connection descriptor for pc-dimm hotplug */
+        pin_list[0] = GPIO_PCDIMM;
+        aml_append(aei, aml_gpio_int(AML_CONSUMER, AML_EDGE, AML_ACTIVE_HIGH,
+                                     AML_EXCLUSIVE, AML_PULL_UP, 0, pin_list,
+                                     1, "GPO0", NULL, 0));
+    }
+
     aml_append(dev, aml_name_decl("_AEI", aei));
 
     /* _E03 is handle for power button */
@@ -736,6 +749,8 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
     Aml *scope, *dsdt;
     const MemMapEntry *memmap = vms->memmap;
     const int *irqmap = vms->irqmap;
+    MachineState *ms = MACHINE(vms);
+    uint32_t nr_mem = ms->ram_slots;
 
     dsdt = init_aml_allocator();
     /* Reserve space for header */
@@ -757,10 +772,15 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
     acpi_dsdt_add_pci(scope, memmap, (irqmap[VIRT_PCIE] + ARM_SPI_BASE),
                       vms->highmem, vms->highmem_ecam);
     acpi_dsdt_add_gpio(scope, &memmap[VIRT_GPIO],
-                       (irqmap[VIRT_GPIO] + ARM_SPI_BASE));
+                       (irqmap[VIRT_GPIO] + ARM_SPI_BASE), vms);
     acpi_dsdt_add_power_button(scope);
 
     aml_append(dsdt, scope);
+
+    if (vms->acpi_memhp_state.is_enabled) {
+        build_memory_hotplug_aml(dsdt, nr_mem, "\\_SB.GPO0",
+                                 "\\_SB.GPO0._E02", AML_SYSTEM_MEMORY);
+    }
 
     /* copy AML table into ACPI tables blob and patch header there */
     g_array_append_vals(table_data, dsdt->buf->data, dsdt->buf->len);

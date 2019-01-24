@@ -38,6 +38,7 @@
 #include "sysemu/kvm.h"
 #include "hw/intc/arm_gicv3_common.h"
 #include "hw/mem/nvdimm.h"
+#include "hw/acpi/memory_hotplug.h"
 
 #define NUM_GICV2M_SPIS       64
 #define NUM_VIRTIO_TRANSPORTS 32
@@ -137,7 +138,20 @@ typedef struct {
     hwaddr highest_gpa;
     bool extended_memmap;
     AcpiNVDIMMState acpi_nvdimm_state;
+    MemHotplugState acpi_memhp_state;
 } VirtMachineState;
+
+/* GPIO pins for ACPI events */
+enum {
+    GPIO_PCDIMM = 2,
+    GPIO_PWRB,
+};
+
+typedef struct GPIODevice {
+    DeviceState *dev;
+    int pin_num;
+    QLIST_ENTRY(GPIODevice) next;
+} GPIODevice;
 
 #define VIRT_ECAM_ID(high) (high ? VIRT_HIGH_PCIE_ECAM : VIRT_PCIE_ECAM)
 

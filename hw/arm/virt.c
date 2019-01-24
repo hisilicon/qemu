@@ -178,6 +178,9 @@ static const char *valid_cpus[] = {
     ARM_CPU_TYPE_NAME("max"),
 };
 
+static QLIST_HEAD(, GPIODevice) gpio_devices =
+    QLIST_HEAD_INITIALIZER(gpio_devices);
+
 static bool cpu_type_valid(const char *cpu)
 {
     int i;
@@ -745,11 +748,34 @@ static void create_rtc(const VirtMachineState *vms, qemu_irq *pic)
     g_free(nodename);
 }
 
-static DeviceState *gpio_key_dev;
+static DeviceState *virt_get_gpio_dev(int pin)
+{
+    GPIODevice *gpio_dev;
+
+    QLIST_FOREACH(gpio_dev, &gpio_devices, next) {
+        if (pin == gpio_dev->pin_num) {
+            return gpio_dev->dev;
+        }
+    }
+    return NULL;
+}
+
+static void virt_create_gpio_dev(DeviceState *pl061_dev, int pin)
+{
+    GPIODevice *gpio_dev;
+
+    gpio_dev = g_malloc0(sizeof(*gpio_dev));
+    gpio_dev->dev = sysbus_create_simple("gpio-key", -1,
+                                          qdev_get_gpio_in(pl061_dev, pin));
+    gpio_dev->pin_num = pin;
+    QLIST_INSERT_HEAD(&gpio_devices, gpio_dev, next);
+}
+
 static void virt_powerdown_req(Notifier *n, void *opaque)
 {
+    DeviceState *dev = virt_get_gpio_dev(GPIO_PWRB);
     /* use gpio Pin 3 for power button event */
-    qemu_set_irq(qdev_get_gpio_in(gpio_key_dev, 0), 1);
+    qemu_set_irq(qdev_get_gpio_in(dev, 0), 1);
 }
 
 static Notifier virt_system_powerdown_notifier = {
@@ -782,8 +808,11 @@ static void create_gpio(const VirtMachineState *vms, qemu_irq *pic)
     qemu_fdt_setprop_string(vms->fdt, nodename, "clock-names", "apb_pclk");
     qemu_fdt_setprop_cell(vms->fdt, nodename, "phandle", phandle);
 
-    gpio_key_dev = sysbus_create_simple("gpio-key", -1,
-                                        qdev_get_gpio_in(pl061_dev, 3));
+    virt_create_gpio_dev(pl061_dev, GPIO_PWRB);
+
+    if (vms->acpi_memhp_state.is_enabled) {
+        virt_create_gpio_dev(pl061_dev, GPIO_PCDIMM);
+    }
     qemu_fdt_add_subnode(vms->fdt, "/gpio-keys");
     qemu_fdt_setprop_string(vms->fdt, "/gpio-keys", "compatible", "gpio-keys");
     qemu_fdt_setprop_cell(vms->fdt, "/gpio-keys", "#size-cells", 0);
