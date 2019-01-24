@@ -144,6 +144,7 @@ typedef struct {
 enum {
     GPIO_PCDIMM = 2,
     GPIO_PWRB,
+    GPIO_NVDIMM,
 };
 
 typedef struct GPIODevice {

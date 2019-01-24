@@ -360,6 +360,14 @@ static void acpi_dsdt_add_gpio(Aml *scope, const MemMapEntry *gpio_memmap,
                                      1, "GPO0", NULL, 0));
     }
 
+    if (vms->acpi_nvdimm_state.is_enabled) {
+        /* GPIO Interrupt connection descriptor for NVDIMM hotplug */
+        pin_list[0] = GPIO_NVDIMM;
+        aml_append(aei, aml_gpio_int(AML_CONSUMER, AML_EDGE, AML_ACTIVE_HIGH,
+                                     AML_EXCLUSIVE, AML_PULL_UP, 0, pin_list,
+                                     1, "GPO0", NULL, 0));
+    }
+
     aml_append(dev, aml_name_decl("_AEI", aei));
 
     /* _E03 is handle for power button */
@@ -367,6 +375,15 @@ static void acpi_dsdt_add_gpio(Aml *scope, const MemMapEntry *gpio_memmap,
     aml_append(method, aml_notify(aml_name(ACPI_POWER_BUTTON_DEVICE),
                                   aml_int(0x80)));
     aml_append(dev, method);
+
+    if (vms->acpi_nvdimm_state.is_enabled) {
+        /* _E04 is for nvdimm hotplug*/
+        method = aml_method("_E04", 0, AML_NOTSERIALIZED);
+        aml_append(method, aml_notify(aml_name("\\_SB.NVDR"),
+                                      aml_int(0x80)));
+        aml_append(dev, method);
+    }
+
     aml_append(scope, dev);
 }
 
