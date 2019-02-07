@@ -297,7 +297,9 @@ void acpi_memory_unplug_request_cb(HotplugHandler *hotplug_dev,
     }
 
     mdev->is_removing = true;
-    acpi_send_event(DEVICE(hotplug_dev), ACPI_MEMORY_HOTPLUG_STATUS);
+    if (!mem_st->hw_reduced_acpi) {
+        acpi_send_event(DEVICE(hotplug_dev), ACPI_MEMORY_HOTPLUG_STATUS);
+    }
 }
 
 void acpi_memory_unplug_cb(MemHotplugState *mem_st,
