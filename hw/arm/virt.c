@@ -1540,7 +1540,7 @@ static void machvirt_init(MachineState *machine)
 
     vms->smp_cpus = smp_cpus;
 
-    if (!vms->extended_memmap && machine->ram_size > LEGACY_RAMLIMIT_GB) {
+    if (!vms->extended_memmap && machine->ram_size > LEGACY_RAMLIMIT_BYTES) {
         error_report("mach-virt: cannot model more than %dGB RAM",
                      LEGACY_RAMLIMIT_GB);
         exit(1);
@@ -1636,6 +1636,8 @@ static void machvirt_init(MachineState *machine)
     memory_region_allocate_system_memory(ram, NULL, "mach-virt.ram",
                                          machine->ram_size);
     memory_region_add_subregion(sysmem, vms->memmap[VIRT_MEM].base, ram);
+
+    vms->extended_memmap = true;
 
     if (vms->extended_memmap) {
         create_device_memory(vms, sysmem);
