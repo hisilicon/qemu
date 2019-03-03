@@ -8,7 +8,7 @@
 #include "qapi/error.h"
 #include "qapi/qapi-events-misc.h"
 
-static uint16_t memhp_io_base;
+static hwaddr memhp_io_base;
 
 static ACPIOSTInfo *acpi_memory_device_status(int slot, MemStatus *mdev)
 {

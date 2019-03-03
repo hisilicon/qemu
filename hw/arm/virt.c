@@ -34,6 +34,7 @@
 #include "hw/sysbus.h"
 #include "hw/arm/arm.h"
 #include "hw/arm/primecell.h"
+#include "hw/acpi/ged.h"
 #include "hw/arm/virt.h"
 #include "hw/vfio/vfio-calxeda-xgmac.h"
 #include "hw/vfio/vfio-amd-xgbe.h"
@@ -135,6 +136,8 @@ static const MemMapEntry base_memmap[] = {
     [VIRT_SECURE_UART] =        { 0x09040000, 0x00001000 },
     [VIRT_SMMU] =               { 0x09050000, 0x00020000 },
     [VIRT_NVDIMM_ACPI_IO] =     { 0x09070000, 0x00010000 },
+    [VIRT_PCDIMM_ACPI_IO] =     { 0x09080000, 0x00010000 },
+    [VIRT_GED_ACPI_IO] =        { 0x09090000, 0x00010000 },
     [VIRT_MMIO] =               { 0x0a000000, 0x00000200 },
     /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
     [VIRT_PLATFORM_BUS] =       { 0x0c000000, 0x02000000 },
@@ -183,7 +186,30 @@ static const char *valid_cpus[] = {
     ARM_CPU_TYPE_NAME("host"),
     ARM_CPU_TYPE_NAME("max"),
 };
+#if 1 
+static void virt_acpi_ged_conf(VirtMachineState *vms)
+{
+    uint8_t events_size;
 
+    /* GED events */
+    GedEvent events[] = {
+        {
+            .selector = ACPI_GED_IRQ_SEL_MEM,
+            .event    = GED_MEMORY_HOTPLUG,
+        },
+        {
+            .selector = ACPI_GED_IRQ_SEL_NVDIMM,
+            .event    = GED_NVDIMM_HOTPLUG,
+        },
+    };
+
+    events_size = ARRAY_SIZE(events);
+
+    vms->ged_events = g_malloc0(events_size * sizeof(GedEvent));
+    memcpy(vms->ged_events, events, events_size * sizeof(GedEvent));
+    vms->ged_events_size = events_size;
+}
+#endif
 static bool cpu_type_valid(const char *cpu)
 {
     int i;
@@ -752,6 +778,7 @@ static void create_rtc(const VirtMachineState *vms, qemu_irq *pic)
 }
 
 static DeviceState *gpio_key_dev;
+static DeviceState *gpio_ged_dev;
 static void virt_powerdown_req(Notifier *n, void *opaque)
 {
     /* use gpio Pin 3 for power button event */
@@ -790,6 +817,8 @@ static void create_gpio(const VirtMachineState *vms, qemu_irq *pic)
 
     gpio_key_dev = sysbus_create_simple("gpio-key", -1,
                                         qdev_get_gpio_in(pl061_dev, 3));
+    gpio_ged_dev = sysbus_create_simple("gpio-key", -1,
+                                        qdev_get_gpio_in(pl061_dev, 4));
     qemu_fdt_add_subnode(vms->fdt, "/gpio-keys");
     qemu_fdt_setprop_string(vms->fdt, "/gpio-keys", "compatible", "gpio-keys");
     qemu_fdt_setprop_cell(vms->fdt, "/gpio-keys", "#size-cells", 0);
@@ -1316,7 +1345,7 @@ void virt_machine_done(Notifier *notifier, void *data)
     ARMCPU *cpu = ARM_CPU(first_cpu);
     struct arm_boot_info *info = &vms->bootinfo;
     AddressSpace *as = arm_boot_address_space(cpu, info);
-
+    printf("%s: Li \n",__func__);
     /*
      * If the user provided a dtb, we assume the dynamic sysbus nodes
      * already are integrated there. This corresponds to a use case where
@@ -1652,6 +1681,17 @@ static void machvirt_init(MachineState *machine)
 
     create_platform_bus(vms, pic);
 
+    vms->acpi = virt_acpi_init(qdev_get_gpio_in(gpio_ged_dev, 0));
+
+    object_property_add_link(OBJECT(machine), "acpi-device",
+                             TYPE_HOTPLUG_HANDLER,
+                             (Object **)&vms->acpi_dev,
+                             object_property_allow_set_link,
+                             OBJ_PROP_LINK_STRONG, &error_abort);
+    object_property_set_link(OBJECT(machine), OBJECT(vms->acpi),
+                             "acpi-device", &error_abort);
+
+
     if (machine->acpi_nvdimm_state.is_enabled) {
         const struct AcpiGenericAddress arm_virt_nvdimm_acpi_dsmio = {
             .space_id = AML_AS_SYSTEM_MEMORY,
@@ -1664,6 +1704,8 @@ static void machvirt_init(MachineState *machine)
                                arm_virt_nvdimm_acpi_dsmio,
                                vms->fw_cfg, OBJECT(vms));
     }
+
+    virt_acpi_ged_conf(vms);
 
     vms->bootinfo.ram_size = machine->ram_size;
     vms->bootinfo.kernel_filename = machine->kernel_filename;
@@ -1679,6 +1721,7 @@ static void machvirt_init(MachineState *machine)
 
     vms->machine_done.notify = virt_machine_done;
     qemu_add_machine_init_done_notifier(&vms->machine_done);
+    printf("%s: Lx\n", __func__);
 }
 
 static bool virt_get_secure(Object *obj, Error **errp)
@@ -1834,11 +1877,11 @@ static void virt_memory_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
 {
     const bool is_nvdimm = object_dynamic_cast(OBJECT(dev), TYPE_NVDIMM);
     MachineState *ms = MACHINE(hotplug_dev);
-
+/*
     if (dev->hotplugged) {
         error_setg(errp, "memory hotplug is not supported");
     }
-
+*/
     if (is_nvdimm && !ms->acpi_nvdimm_state.is_enabled) {
         error_setg(errp, "nvdimm is not enabled: missing 'nvdimm' in '-M'");
         return;
@@ -1850,7 +1893,9 @@ static void virt_memory_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
 static void virt_memory_plug(HotplugHandler *hotplug_dev,
                              DeviceState *dev, Error **errp)
 {
+    HotplugHandlerClass *hhc;
     MachineState *ms = MACHINE(hotplug_dev);
+    VirtMachineState *vms = VIRT_MACHINE(hotplug_dev);
     bool is_nvdimm = object_dynamic_cast(OBJECT(dev), TYPE_NVDIMM);
     Error *local_err = NULL;
 
@@ -1862,6 +1907,9 @@ static void virt_memory_plug(HotplugHandler *hotplug_dev,
     if (is_nvdimm) {
         nvdimm_plug(&ms->acpi_nvdimm_state);
     }
+
+    hhc = HOTPLUG_HANDLER_GET_CLASS(vms->acpi);
+    hhc->plug(HOTPLUG_HANDLER(vms->acpi), dev, &error_abort);
 
 out:
     error_propagate(errp, local_err);

@@ -38,6 +38,7 @@
 #include "sysemu/kvm.h"
 #include "hw/intc/arm_gicv3_common.h"
 #include "hw/mem/nvdimm.h"
+#include "hw/acpi/ged.h"
 
 #define NUM_GICV2M_SPIS       64
 #define NUM_VIRTIO_TRANSPORTS 32
@@ -79,6 +80,8 @@ enum {
     VIRT_SECURE_UART,
     VIRT_SECURE_MEM,
     VIRT_NVDIMM_ACPI_IO,
+    VIRT_PCDIMM_ACPI_IO,
+    VIRT_GED_ACPI_IO,
     VIRT_LOWMEMMAP_LAST,
 };
 
@@ -135,6 +138,10 @@ typedef struct {
     int psci_conduit;
     hwaddr high_io_base;
     hwaddr highest_gpa;
+    DeviceState *acpi;
+    HotplugHandler *acpi_dev;
+    GedEvent *ged_events;
+    uint32_t ged_events_size;
 } VirtMachineState;
 
 #define VIRT_ECAM_ID(high) (high ? VIRT_HIGH_PCIE_ECAM : VIRT_PCIE_ECAM)
@@ -148,6 +155,8 @@ typedef struct {
     OBJECT_CLASS_CHECK(VirtMachineClass, klass, TYPE_VIRT_MACHINE)
 
 void virt_acpi_setup(VirtMachineState *vms);
+
+DeviceState *virt_acpi_init(qemu_irq ged_irq);
 
 /* Return the number of used redistributor regions  */
 static inline int virt_gicv3_redist_region_count(VirtMachineState *vms)
