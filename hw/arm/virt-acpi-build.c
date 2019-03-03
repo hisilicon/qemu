@@ -69,6 +69,16 @@ static void acpi_dsdt_add_cpus(Aml *scope, int smp_cpus)
     }
 }
 
+static void acpi_dsdt_add_ged(Aml *scope, VirtMachineState *vms)
+{
+    if (!vms->ged_events || !vms->ged_events_size) {
+        return;
+    }
+
+    build_ged_aml(scope, "\\_SB."GED_DEVICE, 0,
+                  vms->ged_events, vms->ged_events_size);
+}
+
 static void acpi_dsdt_add_uart(Aml *scope, const MemMapEntry *uart_memmap,
                                            uint32_t uart_irq)
 {
@@ -766,6 +776,7 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
     scope = aml_scope("\\_SB");
     acpi_dsdt_add_memory_hotplug(MACHINE(vms), dsdt);
     acpi_dsdt_add_cpus(scope, vms->smp_cpus);
+    acpi_dsdt_add_ged(dsdt, vms);
     acpi_dsdt_add_uart(scope, &memmap[VIRT_UART],
                        (irqmap[VIRT_UART] + ARM_SPI_BASE));
     acpi_dsdt_add_flash(scope, &memmap[VIRT_FLASH]);
