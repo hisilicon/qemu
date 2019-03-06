@@ -26,9 +26,11 @@
 #include "hw/arm/virt.h"
 
 #include "hw/acpi/acpi.h"
+#include "hw/acpi/memory_hotplug.h"
 
 typedef struct VirtAcpiState {
     SysBusDevice parent_obj;
+    MemHotplugState memhp_state;
 } VirtAcpiState;
 
 #define TYPE_VIRT_ACPI "virt-acpi"
@@ -44,6 +46,16 @@ static const VMStateDescription vmstate_acpi = {
 static void virt_device_plug_cb(HotplugHandler *hotplug_dev,
                                 DeviceState *dev, Error **errp)
 {
+    VirtAcpiState *s = VIRT_ACPI(hotplug_dev);
+
+    if (s->memhp_state.is_enabled &&
+        object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+            acpi_memory_plug_cb(hotplug_dev, &s->memhp_state,
+                                dev, errp);
+    } else {
+        error_setg(errp, "virt: device plug request for unsupported device"
+                   " type: %s", object_get_typename(OBJECT(dev)));
+    }
 }
 
 static void virt_device_unplug_request_cb(HotplugHandler *hotplug_dev,
@@ -62,6 +74,15 @@ static void virt_send_ged(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
 
 static void virt_device_realize(DeviceState *dev, Error **errp)
 {
+    VirtMachineState *vms = VIRT_MACHINE(qdev_get_machine());
+    const MemMapEntry *memmap = vms->memmap;
+    VirtAcpiState *s = VIRT_ACPI(dev);
+
+    if (s->memhp_state.is_enabled) {
+        acpi_memory_hotplug_init(get_system_memory(), OBJECT(dev),
+                                 &s->memhp_state,
+                                 memmap[VIRT_PCDIMM_ACPI].base);
+    }
 }
 
 DeviceState *virt_acpi_init(void)
@@ -70,6 +91,8 @@ DeviceState *virt_acpi_init(void)
 }
 
 static Property virt_acpi_properties[] = {
+    DEFINE_PROP_BOOL("memory-hotplug-support", VirtAcpiState,
+                     memhp_state.is_enabled, true),
     DEFINE_PROP_END_OF_LIST(),
 };
 
