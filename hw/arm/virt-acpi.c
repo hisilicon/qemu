@@ -32,6 +32,7 @@ typedef struct VirtAcpiState {
     SysBusDevice parent_obj;
     MemHotplugState memhp_state;
     GEDState ged_state;
+    qemu_irq *gsi;
 } VirtAcpiState;
 
 #define TYPE_VIRT_ACPI "virt-acpi"
@@ -71,6 +72,21 @@ static void virt_device_unplug_cb(HotplugHandler *hotplug_dev,
 
 static void virt_send_ged(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
 {
+    VirtAcpiState *s = VIRT_ACPI(adev);
+    uint32_t sel = ACPI_GED_IRQ_SEL_INIT;
+
+    if (ev & ACPI_MEMORY_HOTPLUG_STATUS) {
+        sel = ACPI_GED_IRQ_SEL_MEM;
+    } else {
+        /* Unknown event. Return without generating interrupt. */
+        return;
+    }
+
+    /*
+     * We inject the hotplug interrupt. The IRQ selector will make
+     * the difference from the ACPI table.
+     */
+    acpi_ged_event(&s->ged_state, s->gsi, sel);
 }
 
 static void virt_device_realize(DeviceState *dev, Error **errp)
@@ -89,9 +105,16 @@ static void virt_device_realize(DeviceState *dev, Error **errp)
     }
 }
 
-DeviceState *virt_acpi_init(void)
+DeviceState *virt_acpi_init(qemu_irq *gsi)
 {
-    return sysbus_create_simple(TYPE_VIRT_ACPI, -1, NULL);
+    DeviceState *dev;
+    VirtAcpiState *s;
+
+    dev = sysbus_create_simple(TYPE_VIRT_ACPI, -1, NULL);
+    s = VIRT_ACPI(dev);
+    s->gsi = gsi;
+
+    return dev;
 }
 
 static Property virt_acpi_properties[] = {

@@ -578,6 +578,12 @@ static void create_v2m(VirtMachineState *vms, qemu_irq *pic)
     fdt_add_v2m_gic_node(vms);
 }
 
+static void virt_gsi_handler(void *opaque, int n, int level)
+{
+    qemu_irq *gic_irq = opaque;
+    qemu_set_irq(gic_irq[n], level);
+}
+
 static void create_gic(VirtMachineState *vms, qemu_irq *pic)
 {
     /* We create a standalone GIC */
@@ -692,6 +698,8 @@ static void create_gic(VirtMachineState *vms, qemu_irq *pic)
     for (i = 0; i < NUM_IRQS; i++) {
         pic[i] = qdev_get_gpio_in(gicdev, i);
     }
+
+    vms->gsi = qemu_allocate_irqs(virt_gsi_handler, pic, NUM_IRQS);
 
     fdt_add_gic_node(vms);
 
@@ -1445,7 +1453,7 @@ static void machvirt_init(MachineState *machine)
     VirtMachineClass *vmc = VIRT_MACHINE_GET_CLASS(machine);
     MachineClass *mc = MACHINE_GET_CLASS(machine);
     const CPUArchIdList *possible_cpus;
-    qemu_irq pic[NUM_IRQS];
+    qemu_irq *pic;
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *secure_sysmem = NULL;
     int n, virt_max_cpus;
@@ -1641,6 +1649,7 @@ static void machvirt_init(MachineState *machine)
 
     create_flash(vms, sysmem, secure_sysmem ? secure_sysmem : sysmem);
 
+    pic = g_new0(qemu_irq, NUM_IRQS);
     create_gic(vms, pic);
 
     fdt_add_pmu_nodes(vms);
@@ -1671,7 +1680,7 @@ static void machvirt_init(MachineState *machine)
 
     create_platform_bus(vms, pic);
 
-    vms->acpi = virt_acpi_init();
+    vms->acpi = virt_acpi_init(vms->gsi);
     virt_acpi_ged_conf(vms);
 
     vms->bootinfo.ram_size = machine->ram_size;
@@ -1842,10 +1851,6 @@ static void virt_memory_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
                                  Error **errp)
 {
     const bool is_nvdimm = object_dynamic_cast(OBJECT(dev), TYPE_NVDIMM);
-
-    if (dev->hotplugged) {
-        error_setg(errp, "memory hotplug is not supported");
-    }
 
     if (is_nvdimm) {
         error_setg(errp, "nvdimm is not yet supported");

@@ -136,6 +136,7 @@ typedef struct {
     int psci_conduit;
     hwaddr highest_gpa;
     DeviceState *acpi;
+    qemu_irq *gsi;
     GedEvent *ged_events;
     uint32_t ged_events_size;
 } VirtMachineState;
@@ -151,7 +152,7 @@ typedef struct {
     OBJECT_CLASS_CHECK(VirtMachineClass, klass, TYPE_VIRT_MACHINE)
 
 void virt_acpi_setup(VirtMachineState *vms);
-DeviceState *virt_acpi_init(void);
+DeviceState *virt_acpi_init(qemu_irq *gsi);
 
 /* Return the number of used redistributor regions  */
 static inline int virt_gicv3_redist_region_count(VirtMachineState *vms)
