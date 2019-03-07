@@ -50,6 +50,18 @@
 #define ARM_SPI_BASE 32
 #define ACPI_POWER_BUTTON_DEVICE "PWRB"
 
+static void acpi_dsdt_add_ged(Aml *scope, VirtMachineState *vms)
+{
+    int irq =  vms->irqmap[VIRT_ACPI_GED] + ARM_SPI_BASE;
+
+    if (!vms->ged_events || !vms->ged_events_size) {
+        return;
+    }
+
+    build_ged_aml(scope, "\\_SB."GED_DEVICE, irq, vms->ged_events,
+                  vms->ged_events_size, AML_SYSTEM_MEMORY);
+}
+
 static void acpi_dsdt_add_memory_hotplug(Aml *scope, MachineState *ms)
 {
     uint32_t nr_mem = ms->ram_slots;
@@ -758,6 +770,7 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
      */
     scope = aml_scope("\\_SB");
     acpi_dsdt_add_memory_hotplug(scope, MACHINE(vms));
+    acpi_dsdt_add_ged(scope, vms);
     acpi_dsdt_add_cpus(scope, vms->smp_cpus);
     acpi_dsdt_add_uart(scope, &memmap[VIRT_UART],
                        (irqmap[VIRT_UART] + ARM_SPI_BASE));

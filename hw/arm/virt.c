@@ -60,6 +60,7 @@
 #include "standard-headers/linux/input.h"
 #include "hw/arm/smmuv3.h"
 #include "hw/acpi/acpi.h"
+#include "hw/acpi/ged.h"
 #include "target/arm/internals.h"
 #include "hw/mem/pc-dimm.h"
 #include "hw/mem/nvdimm.h"
@@ -134,6 +135,7 @@ static const MemMapEntry base_memmap[] = {
     [VIRT_SECURE_UART] =        { 0x09040000, 0x00001000 },
     [VIRT_SMMU] =               { 0x09050000, 0x00020000 },
     [VIRT_PCDIMM_ACPI] =        { 0x09070000, 0x00010000 },
+    [VIRT_ACPI_GED] =           { 0x09080000, 0x00010000 },
     [VIRT_MMIO] =               { 0x0a000000, 0x00000200 },
     /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
     [VIRT_PLATFORM_BUS] =       { 0x0c000000, 0x02000000 },
@@ -169,6 +171,7 @@ static const int a15irqmap[] = {
     [VIRT_PCIE] = 3, /* ... to 6 */
     [VIRT_GPIO] = 7,
     [VIRT_SECURE_UART] = 8,
+    [VIRT_ACPI_GED] = 9,
     [VIRT_MMIO] = 16, /* ...to 16 + NUM_VIRTIO_TRANSPORTS - 1 */
     [VIRT_GIC_V2M] = 48, /* ...to 48 + NUM_GICV2M_SPIS - 1 */
     [VIRT_SMMU] = 74,    /* ...to 74 + NUM_SMMU_IRQS - 1 */
@@ -183,6 +186,25 @@ static const char *valid_cpus[] = {
     ARM_CPU_TYPE_NAME("host"),
     ARM_CPU_TYPE_NAME("max"),
 };
+
+static void virt_acpi_ged_conf(VirtMachineState *vms)
+{
+    uint8_t events_size;
+
+    /* GED events */
+    GedEvent events[] = {
+        {
+            .selector = ACPI_GED_IRQ_SEL_MEM,
+            .event    = GED_MEMORY_HOTPLUG,
+        },
+    };
+
+    events_size = ARRAY_SIZE(events);
+
+    vms->ged_events = g_malloc0(events_size * sizeof(GedEvent));
+    memcpy(vms->ged_events, events, events_size * sizeof(GedEvent));
+    vms->ged_events_size = events_size;
+}
 
 static bool cpu_type_valid(const char *cpu)
 {
@@ -1650,6 +1672,7 @@ static void machvirt_init(MachineState *machine)
     create_platform_bus(vms, pic);
 
     vms->acpi = virt_acpi_init();
+    virt_acpi_ged_conf(vms);
 
     vms->bootinfo.ram_size = machine->ram_size;
     vms->bootinfo.kernel_filename = machine->kernel_filename;

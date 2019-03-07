@@ -31,6 +31,7 @@
 typedef struct VirtAcpiState {
     SysBusDevice parent_obj;
     MemHotplugState memhp_state;
+    GEDState ged_state;
 } VirtAcpiState;
 
 #define TYPE_VIRT_ACPI "virt-acpi"
@@ -76,12 +77,15 @@ static void virt_device_realize(DeviceState *dev, Error **errp)
 {
     VirtMachineState *vms = VIRT_MACHINE(qdev_get_machine());
     const MemMapEntry *memmap = vms->memmap;
+    const int *irqmap = vms->irqmap;
     VirtAcpiState *s = VIRT_ACPI(dev);
 
     if (s->memhp_state.is_enabled) {
         acpi_memory_hotplug_init(get_system_memory(), OBJECT(dev),
                                  &s->memhp_state,
                                  memmap[VIRT_PCDIMM_ACPI].base);
+        acpi_ged_init(get_system_memory(), OBJECT(dev), &s->ged_state,
+                      memmap[VIRT_ACPI_GED].base, irqmap[VIRT_ACPI_GED]);
     }
 }
 
