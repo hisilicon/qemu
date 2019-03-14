@@ -803,10 +803,11 @@ epilogue:
 static void smmuv3_notify_iova(IOMMUMemoryRegion *mr,
                                IOMMUNotifier *n,
                                int asid, dma_addr_t iova,
-                               uint8_t tg, uint64_t num_pages)
+                               uint8_t tg, uint64_t num_pages, bool leaf)
 {
     SMMUDevice *sdev = container_of(mr, SMMUDevice, iommu);
     struct iommu_hwpt_invalidate_arm_smmuv3 data = {
+        .flags = leaf ? IOMMU_SMMUV3_CMDQ_TLBI_VA_LEAF : 0,
         .opcode = SMMU_CMD_TLBI_NH_VA,
         .asid = asid,
     };
@@ -882,7 +883,7 @@ static void smmuv3_notify_asid(IOMMUMemoryRegion *mr,
 
 /* invalidate an asid/iova range tuple in all mr's */
 static void smmuv3_inv_notifiers_iova(SMMUState *s, int asid, dma_addr_t iova,
-                                      uint8_t tg, uint64_t num_pages)
+                                      uint8_t tg, uint64_t num_pages, bool leaf)
 {
     SMMUDevice *sdev;
 
@@ -894,7 +895,7 @@ static void smmuv3_inv_notifiers_iova(SMMUState *s, int asid, dma_addr_t iova,
                                         tg, num_pages);
 
         IOMMU_NOTIFIER_FOREACH(n, mr) {
-            smmuv3_notify_iova(mr, n, asid, iova, tg, num_pages);
+            smmuv3_notify_iova(mr, n, asid, iova, tg, num_pages, leaf);
         }
     }
 }
@@ -919,7 +920,7 @@ static void smmuv3_s1_range_inval(SMMUState *s, Cmd *cmd)
 
     if (!tg) {
         trace_smmuv3_s1_range_inval(vmid, asid, addr, tg, 1, ttl, leaf);
-        smmuv3_inv_notifiers_iova(s, asid, addr, tg, 1);
+        smmuv3_inv_notifiers_iova(s, asid, addr, tg, 1, leaf);
         smmu_iotlb_inv_iova(s, asid, addr, tg, 1, ttl);
         return;
     }
@@ -937,7 +938,7 @@ static void smmuv3_s1_range_inval(SMMUState *s, Cmd *cmd)
 
         num_pages = (mask + 1) >> granule;
         trace_smmuv3_s1_range_inval(vmid, asid, addr, tg, num_pages, ttl, leaf);
-        smmuv3_inv_notifiers_iova(s, asid, addr, tg, num_pages);
+        smmuv3_inv_notifiers_iova(s, asid, addr, tg, num_pages, leaf);
         smmu_iotlb_inv_iova(s, asid, addr, tg, num_pages, ttl);
         addr += mask + 1;
     }
