@@ -19,6 +19,7 @@
 #include "sysemu/numa.h"
 #include "hw/boards.h"
 #include "hw/loader.h"
+#include "hw/mem/memory-device.h"
 #include "elf.h"
 #include "sysemu/device_tree.h"
 #include "qemu/config-file.h"
@@ -425,7 +426,7 @@ static void set_kernel_args_old(const struct arm_boot_info *info,
 
 static int fdt_add_memory_node(void *fdt, uint32_t acells, hwaddr mem_base,
                                uint32_t scells, hwaddr mem_len,
-                               int numa_node_id)
+                               int numa_node_id, bool hotplug)
 {
     char *nodename;
     int ret;
@@ -443,6 +444,22 @@ static int fdt_add_memory_node(void *fdt, uint32_t acells, hwaddr mem_base,
     if (numa_node_id >= 0) {
         ret = qemu_fdt_setprop_cell(fdt, nodename,
                                     "numa-node-id", numa_node_id);
+    }
+
+    /*
+     * Firmware has no way of differentiating the memory nodes currently
+     * and in the case of device memory nodes this is a problem if Guest
+     * boots with ACPI as these nodes might get exposed to Guest Kernel
+     * via UEFI GetMemoryMap() as early boot memory. This will prevent
+     * the memory being hot-unpluggable. To address this, an additional
+     * "hotpluggable" property is introduced here, similar to the
+     * MEM_AFFINITY_HOTPLUGGABLE flag used in ACPI SRAT table.
+     * Firmware can now check for "hotpluggable" property in the memory
+     * node and treat them differently.
+     */
+
+    if (hotplug) {
+        ret = qemu_fdt_setprop(fdt, nodename, "hotpluggable", NULL, 0);
     }
 out:
     g_free(nodename);
@@ -520,6 +537,41 @@ static void fdt_add_psci_node(void *fdt)
     qemu_fdt_setprop_cell(fdt, "/psci", "cpu_off", cpu_off_fn);
     qemu_fdt_setprop_cell(fdt, "/psci", "cpu_on", cpu_on_fn);
     qemu_fdt_setprop_cell(fdt, "/psci", "migrate", migrate_fn);
+}
+
+static int fdt_add_hotpluggable_memory_nodes(void *fdt,
+                                             uint32_t acells, uint32_t scells) {
+    MemoryDeviceInfoList *info, *info_list = qmp_memory_device_list();
+    MemoryDeviceInfo *mi;
+    int ret = 0;
+
+    for (info = info_list; info != NULL; info = info->next) {
+        mi = info->value;
+        switch (mi->type) {
+        case MEMORY_DEVICE_INFO_KIND_DIMM:
+        {
+            PCDIMMDeviceInfo *di = mi->u.dimm.data;
+
+            ret = fdt_add_memory_node(fdt, acells, di->addr, scells,
+                                      di->size, di->node, true);
+            if (ret) {
+                fprintf(stderr,
+                        "couldn't add PCDIMM /memory@%"PRIx64" node\n",
+                        di->addr);
+                goto out;
+            }
+            break;
+        }
+        default:
+            fprintf(stderr, "%s memory nodes are not yet supported\n",
+                    MemoryDeviceInfoKind_str(mi->type));
+            ret = -ENOENT;
+            goto out;
+        }
+    }
+out:
+    qapi_free_MemoryDeviceInfoList(info_list);
+    return ret;
 }
 
 int arm_load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
@@ -602,7 +654,7 @@ int arm_load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
         for (i = 0; i < nb_numa_nodes; i++) {
             mem_len = numa_info[i].node_mem;
             rc = fdt_add_memory_node(fdt, acells, mem_base,
-                                     scells, mem_len, i);
+                                     scells, mem_len, i, false);
             if (rc < 0) {
                 fprintf(stderr, "couldn't add /memory@%"PRIx64" node\n",
                         mem_base);
@@ -613,12 +665,18 @@ int arm_load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
         }
     } else {
         rc = fdt_add_memory_node(fdt, acells, binfo->loader_start,
-                                 scells, binfo->ram_size, -1);
+                                 scells, binfo->ram_size, -1, false);
         if (rc < 0) {
             fprintf(stderr, "couldn't add /memory@%"PRIx64" node\n",
                     binfo->loader_start);
             goto fail;
         }
+    }
+
+    rc = fdt_add_hotpluggable_memory_nodes(fdt, acells, scells);
+    if (rc < 0) {
+        fprintf(stderr, "couldn't add hotpluggable memory nodes\n");
+        goto fail;
     }
 
     rc = fdt_path_offset(fdt, "/chosen");
