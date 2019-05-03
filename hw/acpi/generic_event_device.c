@@ -32,6 +32,8 @@ static Aml *ged_event_aml(const GedEvent *event)
 
     switch (event->event) {
     case GED_MEMORY_HOTPLUG:
+    case GED_DUMMY1_HOTPLUG:
+    case GED_DUMMY2_HOTPLUG:
         /* We run a complete memory SCAN when getting a memory hotplug event */
         return aml_call0(MEMORY_DEVICES_CONTAINER "." MEMORY_SLOT_SCAN_METHOD);
     default:
@@ -193,7 +195,7 @@ static void acpi_ged_event(GEDState *ged_st, uint32_t ged_irq_sel)
     qemu_mutex_unlock(&ged_st->lock);
 
     /* Trigger the event by sending an interrupt to the guest. */
-    qemu_irq_pulse(ged_st->gsi[ged_st->irq]);
+    qemu_irq_pulse(ged_st->gsi);
 }
 
 static void acpi_ged_init(MemoryRegion *as, DeviceState *dev, GEDState *ged_st)
@@ -203,7 +205,7 @@ static void acpi_ged_init(MemoryRegion *as, DeviceState *dev, GEDState *ged_st)
     assert(s->ged_base);
 
     ged_st->irq = s->ged_irq;
-    ged_st->gsi = s->gsi;
+    ged_st->gsi = *(qemu_irq *)s->gsi;
     qemu_mutex_init(&ged_st->lock);
     memory_region_init_io(&ged_st->io, OBJECT(dev), &ged_ops, ged_st,
                           "acpi-ged-event", ACPI_GED_REG_LEN);

@@ -192,6 +192,14 @@ static GedEvent ged_events[] = {
         .selector = ACPI_GED_IRQ_SEL_MEM,
         .event    = GED_MEMORY_HOTPLUG,
     },
+    {
+        .selector = ACPI_GED_IRQ_SEL_DUMMY1,
+        .event    = GED_DUMMY1_HOTPLUG,
+    },
+    {
+        .selector = ACPI_GED_IRQ_SEL_DUMMY2,
+        .event    = GED_DUMMY2_HOTPLUG,
+    },
 };
 
 static bool cpu_type_valid(const char *cpu)
@@ -527,14 +535,16 @@ static void fdt_add_pmu_nodes(const VirtMachineState *vms)
     }
 }
 
-static inline DeviceState *create_acpi_ged(VirtMachineState *vms)
+static inline DeviceState *create_acpi_ged(VirtMachineState *vms, qemu_irq *pic)
 {
     DeviceState *dev;
+    int irq = vms->irqmap[VIRT_ACPI_GED];
 
     dev = DEVICE(object_new(TYPE_ACPI_GED));
     qdev_prop_set_uint64(dev, "memhp-base",
                          vms->memmap[VIRT_PCDIMM_ACPI].base);
-    qdev_prop_set_ptr(dev, "gsi", vms->gsi);
+    //qdev_prop_set_ptr(dev, "gsi", vms->gsi);
+    qdev_prop_set_ptr(dev, "gsi", &pic[irq]);
     qdev_prop_set_uint64(dev, "ged-base", vms->memmap[VIRT_ACPI_GED].base);
     qdev_prop_set_uint32(dev, "ged-irq", vms->irqmap[VIRT_ACPI_GED]);
     qdev_prop_set_ptr(dev, "ged-events", ged_events);
@@ -585,13 +595,13 @@ static void create_v2m(VirtMachineState *vms, qemu_irq *pic)
 
     fdt_add_v2m_gic_node(vms);
 }
-
+/*
 static void virt_gsi_handler(void *opaque, int n, int level)
 {
     qemu_irq *gic_irq = opaque;
     qemu_set_irq(gic_irq[n], level);
 }
-
+*/
 static void create_gic(VirtMachineState *vms, qemu_irq *pic)
 {
     /* We create a standalone GIC */
@@ -707,7 +717,8 @@ static void create_gic(VirtMachineState *vms, qemu_irq *pic)
         pic[i] = qdev_get_gpio_in(gicdev, i);
     }
 
-    vms->gsi = qemu_allocate_irqs(virt_gsi_handler, pic, NUM_IRQS);
+    //vms->gsi = qemu_allocate_irqs(virt_gsi_handler, pic, NUM_IRQS);
+    vms->gsi = qemu_allocate_irqs(NULL, pic, NUM_IRQS);
 
     fdt_add_gic_node(vms);
 
@@ -1684,7 +1695,7 @@ static void machvirt_init(MachineState *machine)
 
     create_platform_bus(vms, pic);
 
-    vms->acpi_dev = create_acpi_ged(vms);
+    vms->acpi_dev = create_acpi_ged(vms, pic);
 
     vms->bootinfo.ram_size = machine->ram_size;
     vms->bootinfo.kernel_filename = machine->kernel_filename;

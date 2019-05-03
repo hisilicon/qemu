@@ -74,6 +74,8 @@
 #define ACPI_GED_IRQ_SEL_OFFSET 0x0
 #define ACPI_GED_IRQ_SEL_LEN    0x4
 #define ACPI_GED_IRQ_SEL_MEM    0x1
+#define ACPI_GED_IRQ_SEL_DUMMY1  0x2
+#define ACPI_GED_IRQ_SEL_DUMMY2  0x3
 #define ACPI_GED_REG_LEN        0x4
 
 #define GED_DEVICE      "GED"
@@ -82,6 +84,8 @@
 
 typedef enum {
     GED_MEMORY_HOTPLUG = 1,
+    GED_DUMMY1_HOTPLUG = 12,
+    GED_DUMMY2_HOTPLUG = 5,
 } GedEventType;
 
 /*
@@ -98,7 +102,7 @@ typedef struct GEDState {
     MemoryRegion io;
     uint32_t     sel;
     uint32_t     irq;
-    qemu_irq     *gsi;
+    qemu_irq     gsi;
     QemuMutex    lock;
 } GEDState;
 
