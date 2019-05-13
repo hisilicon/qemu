@@ -187,10 +187,19 @@ static const char *valid_cpus[] = {
     ARM_CPU_TYPE_NAME("max"),
 };
 
+DeviceState *geddev;
 static GedEvent ged_events[] = {
     {
         .selector = ACPI_GED_IRQ_SEL_MEM,
         .event    = GED_MEMORY_HOTPLUG,
+    },
+    {
+        .selector = ACPI_GED_IRQ_SEL_PWR_DOWN,
+        .event    = GED_PWR_DOWN,
+    },
+    {
+        .selector = ACPI_GED_IRQ_SEL_DUMMY2,
+        .event    = GED_DUMMY2_HOTPLUG,
     },
 };
 
@@ -527,21 +536,37 @@ static void fdt_add_pmu_nodes(const VirtMachineState *vms)
     }
 }
 
-static inline DeviceState *create_acpi_ged(VirtMachineState *vms)
+static inline DeviceState *create_acpi_ged(VirtMachineState *vms, qemu_irq *pic, MemoryRegion *sysmem)
 {
     DeviceState *dev;
+    GedProp *ged_prop;
+    //Object *gedobj;
+    int irq = vms->irqmap[VIRT_ACPI_GED];
+    //qemu_irq *new_irq = &pic[irq];
 
-    dev = DEVICE(object_new(TYPE_ACPI_GED));
+    //gedobj = object_new(TYPE_ACPI_GED);
+    dev = qdev_create(NULL, TYPE_ACPI_GED);
+    ged_prop = g_new0(GedProp, 1);
+    object_initialize(ged_prop, sizeof(*ged_prop), TYPE_GED_PROP);
+    //dev = DEVICE(object_new(TYPE_ACPI_GED));
+    //dev = DEVICE(gedobj);
+    //geddev = dev;
     qdev_prop_set_uint64(dev, "memhp-base",
                          vms->memmap[VIRT_PCDIMM_ACPI].base);
-    qdev_prop_set_ptr(dev, "gsi", vms->gsi);
+    qdev_prop_set_ptr(dev, "gsi", &pic[irq]);
+    object_property_set_link(OBJECT(dev), OBJECT(ged_prop), "new",
+                             &error_abort);
     qdev_prop_set_uint64(dev, "ged-base", vms->memmap[VIRT_ACPI_GED].base);
     qdev_prop_set_uint32(dev, "ged-irq", vms->irqmap[VIRT_ACPI_GED]);
     qdev_prop_set_ptr(dev, "ged-events", ged_events);
+    //warn_report("%s before set  %p\n", __func__, ged_events);
+    object_property_set_link(OBJECT(dev), OBJECT(sysmem), "downstream",
+                             &error_abort);
+    //warn_report("%s after set \n", __func__);
     qdev_prop_set_uint32(dev, "ged-events-size", ARRAY_SIZE(ged_events));
-
     object_property_add_child(qdev_get_machine(), "acpi-ged",
                               OBJECT(dev), NULL);
+
     qdev_init_nofail(dev);
 
     return dev;
@@ -584,12 +609,6 @@ static void create_v2m(VirtMachineState *vms, qemu_irq *pic)
     }
 
     fdt_add_v2m_gic_node(vms);
-}
-
-static void virt_gsi_handler(void *opaque, int n, int level)
-{
-    qemu_irq *gic_irq = opaque;
-    qemu_set_irq(gic_irq[n], level);
 }
 
 static void create_gic(VirtMachineState *vms, qemu_irq *pic)
@@ -707,8 +726,6 @@ static void create_gic(VirtMachineState *vms, qemu_irq *pic)
         pic[i] = qdev_get_gpio_in(gicdev, i);
     }
 
-    vms->gsi = qemu_allocate_irqs(virt_gsi_handler, pic, NUM_IRQS);
-
     fdt_add_gic_node(vms);
 
     if (type == 3 && vms->its) {
@@ -792,6 +809,7 @@ static void create_rtc(const VirtMachineState *vms, qemu_irq *pic)
 static DeviceState *gpio_key_dev;
 static void virt_powerdown_req(Notifier *n, void *opaque)
 {
+    warn_report("%s \n",__func__);	
     /* use gpio Pin 3 for power button event */
     qemu_set_irq(qdev_get_gpio_in(gpio_key_dev, 0), 1);
 }
@@ -1684,7 +1702,7 @@ static void machvirt_init(MachineState *machine)
 
     create_platform_bus(vms, pic);
 
-    vms->acpi_dev = create_acpi_ged(vms);
+    vms->acpi_dev = create_acpi_ged(vms, pic, sysmem);
 
     vms->bootinfo.ram_size = machine->ram_size;
     vms->bootinfo.kernel_filename = machine->kernel_filename;

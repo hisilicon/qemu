@@ -343,6 +343,7 @@ static void acpi_dsdt_add_gpio(Aml *scope, const MemMapEntry *gpio_memmap,
                                   AML_EXCLUSIVE, &gpio_irq, 1));
     aml_append(dev, aml_name_decl("_CRS", crs));
 
+#if 0    
     Aml *aei = aml_resource_template();
     /* Pin 3 for power button */
     const uint32_t pin_list[1] = {3};
@@ -350,7 +351,7 @@ static void acpi_dsdt_add_gpio(Aml *scope, const MemMapEntry *gpio_memmap,
                                  AML_EXCLUSIVE, AML_PULL_UP, 0, pin_list, 1,
                                  "GPO0", NULL, 0));
     aml_append(dev, aml_name_decl("_AEI", aei));
-
+#endif
     /* _E03 is handle for power button */
     Aml *method = aml_method("_E03", 0, AML_NOTSERIALIZED);
     aml_append(method, aml_notify(aml_name(ACPI_POWER_BUTTON_DEVICE),
