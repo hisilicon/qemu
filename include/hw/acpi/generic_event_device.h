@@ -73,65 +73,39 @@
 
 #define ACPI_GED_IRQ_SEL_OFFSET    0x0
 #define ACPI_GED_IRQ_SEL_LEN       0x4
-#define ACPI_GED_IRQ_SEL_MEM       0x1
-#define ACPI_GED_IRQ_SEL_PWR_DOWN  0x2
-#define ACPI_GED_IRQ_SEL_DUMMY2    0x3
 #define ACPI_GED_REG_LEN           0x4
 
 #define GED_DEVICE      "GED"
 #define AML_GED_IRQ_REG "IREG"
 #define AML_GED_IRQ_SEL "ISEL"
 
-typedef enum {
-    GED_MEMORY_HOTPLUG = 1,
-    GED_PWR_DOWN = 12,
-    GED_DUMMY2_HOTPLUG = 5,
-} GedEventType;
-
 /*
- * Platforms need to specify their own GedEvent array
+ * Platforms need to specify the GED event bitmap
  * to describe what kind of events they want to support
  * through GED.
  */
-#define TYPE_GED_PROP "ged-prop"
-typedef struct GedProp {
-    Object obj;	
-    struct GedEvent *ged_events;
-    qemu_irq     gsi;
-} GedProp;
-
-typedef struct GedEvent {
-    uint32_t     selector;
-    GedEventType event;
-} GedEvent;
+#define ACPI_GED_MEM_HOTPLUG_EVT   0x1
+#define ACPI_GED_PWR_DOWN_EVT      0x2
 
 typedef struct GEDState {
     MemoryRegion io;
     uint32_t     sel;
-    uint32_t     irq;
-    qemu_irq     gsi;
     QemuMutex    lock;
 } GEDState;
 
-
 typedef struct AcpiGedState {
     DeviceClass parent_obj;
+    MemoryRegion iomem;
     Notifier powerdown_notifier;
     MemHotplugState memhp_state;
     hwaddr memhp_base;
-    void* gsi;
     hwaddr ged_base;
     GEDState ged_state;
-    uint32_t ged_irq;
-    void *ged_events;
-    qemu_irq     *new_gsi;
-    //GedEvent *ged_events;
-    GedProp *ged_prop;
-    uint32_t ged_events_size;
-    MemoryRegion *downstream1;
+    uint32_t ged_event_bitmap;
+    qemu_irq irq;
 } AcpiGedState;
 
 void build_ged_aml(Aml *table, const char* name, HotplugHandler *hotplug_dev,
-                   uint32_t ged_irq, AmlRegionSpace rs);
+                   hwaddr ged_base, uint32_t ged_irq, AmlRegionSpace rs);
 
 #endif

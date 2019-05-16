@@ -26,6 +26,13 @@
 
 #define ACPI_POWER_BUTTON_DEVICE "PWRB"
 
+static const uint32_t ged_supported_events[] = {
+    ACPI_GED_MEM_HOTPLUG_EVT,
+    ACPI_GED_PWR_DOWN_EVT,
+    0x10,
+    0x20,
+};
+
 /*
  * The ACPI Generic Event Device (GED) is a hardware-reduced specific
  * device[ACPI v6.1 Section 5.6.9] that handles all platform events,
@@ -37,20 +44,14 @@
  * with a unique interrupt.
  */
 void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
-                   uint32_t ged_irq, AmlRegionSpace rs)
+                   hwaddr ged_base, uint32_t ged_irq, AmlRegionSpace rs)
 {
     AcpiGedState *s = ACPI_GED(hotplug_dev);
-    GedEvent *ged_events = s->ged_events;
     Aml *crs = aml_resource_template();
     Aml *evt, *field;
     Aml *dev = aml_device("%s", name);
     Aml *irq_sel = aml_local(0);
     Aml *isel = aml_name(AML_GED_IRQ_SEL);
-    uint32_t i;
-
-    if (!s->ged_base || !ged_events || !s->ged_events_size) {
-        return;
-    }
 
     /* _CRS interrupt */
     aml_append(crs, aml_interrupt(AML_CONSUMER, AML_EDGE, AML_ACTIVE_HIGH,
@@ -62,7 +63,7 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
 
     /* Append IO region */
     aml_append(dev, aml_operation_region(AML_GED_IRQ_REG, rs,
-               aml_int(s->ged_base + ACPI_GED_IRQ_SEL_OFFSET),
+               aml_int(ged_base + ACPI_GED_IRQ_SEL_OFFSET),
                ACPI_GED_IRQ_SEL_LEN));
     field = aml_field(AML_GED_IRQ_REG, AML_DWORD_ACC, AML_NOLOCK,
                       AML_WRITE_AS_ZEROS);
@@ -78,6 +79,8 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
     evt = aml_method("_EVT", 1, AML_SERIALIZED);
     {
         Aml *if_ctx;
+        uint32_t i;
+        uint32_t ged_events = ctpop32(s->ged_event_bitmap);
 
         /* Local0 = ISEL */
         aml_append(evt, aml_store(isel, irq_sel));
@@ -99,29 +102,36 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
          * ...
          */
 
-        for (i = 0; i < s->ged_events_size; i++) {
-            if_ctx = aml_if(aml_equal(aml_and(irq_sel,
-                                      aml_int(ged_events[i].selector), NULL),
-                                      aml_int(ged_events[i].selector)));
-            switch (ged_events[i].event) {
-            case GED_MEMORY_HOTPLUG:
+        for (i = 0; i < ARRAY_SIZE(ged_supported_events) && ged_events; i++) {
+            uint32_t event = s->ged_event_bitmap & ged_supported_events[i];
+
+            if (!event) {
+                continue;
+            }
+
+            if_ctx = aml_if(aml_equal(aml_and(irq_sel, aml_int(event), NULL),
+                                      aml_int(event)));
+            switch (event) {
+            case ACPI_GED_MEM_HOTPLUG_EVT:
                 aml_append(if_ctx, aml_call0(MEMORY_DEVICES_CONTAINER "."
                                              MEMORY_SLOT_SCAN_METHOD));
                 break;
-            case GED_PWR_DOWN:
+            case ACPI_GED_PWR_DOWN_EVT:
                 aml_append(if_ctx, 
                            aml_notify(aml_name(ACPI_POWER_BUTTON_DEVICE),
                                       aml_int(0x80)));
 		break;
-            default:
-                warn_report("GED doesn't have any Notify() object for the "
-                            "platform event %u. It may not be handled properly",
-                             ged_events[i].event);
-
             }
             aml_append(evt, if_ctx);
+            ged_events--;
+        }
+
+        if (ged_events) {
+            error_report("GED: Unsupported events specified");
+            exit(1);
         }
     }
+
 
     /* Append _EVT method */
     aml_append(dev, evt);
@@ -170,15 +180,12 @@ static void acpi_ged_init(MemoryRegion *as, DeviceState *dev, GEDState *ged_st)
 {
     AcpiGedState *s = ACPI_GED(dev);
 
-    assert(s->ged_base);
-
-    ged_st->irq = s->ged_irq;
-    ged_st->gsi = *(qemu_irq *)s->gsi;
-    warn_report("%s gsi %p s->gsi %p\n", __func__, ged_st->gsi, s->gsi);
     qemu_mutex_init(&ged_st->lock);
+
     memory_region_init_io(&ged_st->io, OBJECT(dev), &ged_ops, ged_st,
                           "acpi-ged-event", ACPI_GED_REG_LEN);
     memory_region_add_subregion(as, s->ged_base, &ged_st->io);
+    sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irq);
 }
 
 static void acpi_ged_device_plug_cb(HotplugHandler *hotplug_dev,
@@ -196,37 +203,8 @@ static void acpi_ged_device_plug_cb(HotplugHandler *hotplug_dev,
     }
 }
 
-static void acpi_ged_event(GEDState *ged_st, uint32_t ged_irq_sel)
+static void acpi_ged_event(GEDState *ged_st, qemu_irq irq, uint32_t sel)
 {
-    /*
-     * Set the GED IRQ selector to the expected device type value. This
-     * way, the ACPI method will be able to trigger the right code based
-     * on a unique IRQ.
-     */
-    qemu_mutex_lock(&ged_st->lock);
-    ged_st->sel |= ged_irq_sel;
-    qemu_mutex_unlock(&ged_st->lock);
-
-    /* Trigger the event by sending an interrupt to the guest. */
-    warn_report("%s gsi %p \n", __func__, ged_st->gsi);
-    qemu_irq_pulse(ged_st->gsi);
-}
-
-static void acpi_ged_send_event(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
-{
-    AcpiGedState *s = ACPI_GED(adev);
-    GEDState *ged_st = &s->ged_state;
-    uint32_t sel;
-
-    if (ev & ACPI_MEMORY_HOTPLUG_STATUS) {
-        sel = ACPI_GED_IRQ_SEL_MEM;
-    } else {
-        /* Unknown event. Return without generating interrupt. */
-        return;
-    }
-
-    acpi_ged_event(ged_st, sel);
-#if 0   
     /*
      * Set the GED IRQ selector to the expected device type value. This
      * way, the ACPI method will be able to trigger the right code based
@@ -237,17 +215,29 @@ static void acpi_ged_send_event(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
     qemu_mutex_unlock(&ged_st->lock);
 
     /* Trigger the event by sending an interrupt to the guest. */
-    qemu_irq_pulse(ged_st->gsi);
-#endif    
+    qemu_irq_pulse(irq);
+}
+
+static void acpi_ged_send_event(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
+{
+    AcpiGedState *s = ACPI_GED(adev);
+    uint32_t sel;
+
+    if (ev & ACPI_MEMORY_HOTPLUG_STATUS) {
+        sel = ACPI_GED_MEM_HOTPLUG_EVT;
+    } else {
+        /* Unknown event. Return without generating interrupt. */
+        return;
+    }
+
+    acpi_ged_event(&s->ged_state, s->irq, sel);
 }
 
 static void acpi_ged_pm_powerdown_req(Notifier *n, void *opaque)
 {
     AcpiGedState *s = container_of(n, AcpiGedState, powerdown_notifier);
-    GEDState *ged_st = &s->ged_state;
 
-    warn_report("%s \n",__func__);
-    acpi_ged_event(ged_st, ACPI_GED_IRQ_SEL_PWR_DOWN);
+    acpi_ged_event(&s->ged_state, s->irq, ACPI_GED_PWR_DOWN_EVT);
 }
 
 static void acpi_ged_device_realize(DeviceState *dev, Error **errp)
@@ -258,13 +248,12 @@ static void acpi_ged_device_realize(DeviceState *dev, Error **errp)
         acpi_memory_hotplug_init(get_system_memory(), OBJECT(dev),
                                  &s->memhp_state,
                                  s->memhp_base);
-        acpi_ged_init(get_system_memory(), dev, &s->ged_state);
     }
+
+    acpi_ged_init(get_system_memory(), dev, &s->ged_state);
 
     s->powerdown_notifier.notify = acpi_ged_pm_powerdown_req;
     qemu_register_powerdown_notifier(&s->powerdown_notifier);
-
-
 }
 
 static Property acpi_ged_properties[] = {
@@ -276,33 +265,11 @@ static Property acpi_ged_properties[] = {
     DEFINE_PROP_UINT64("memhp-base", AcpiGedState, memhp_base, 0),
     DEFINE_PROP_BOOL("memory-hotplug-support", AcpiGedState,
                      memhp_state.is_enabled, true),
-    DEFINE_PROP_PTR("gsi", AcpiGedState, gsi),
-    DEFINE_PROP_LINK("new", AcpiGedState, new_gsi, TYPE_IRQ,
-                     qemu_irq *),
     DEFINE_PROP_UINT64("ged-base", AcpiGedState, ged_base, 0),
-    DEFINE_PROP_UINT32("ged-irq", AcpiGedState, ged_irq, 0),
-    DEFINE_PROP_PTR("ged-events", AcpiGedState, ged_events),
-    //DEFINE_PROP_LINK("ged-events", AcpiGedState, new_ged_events, "acpi-ged",
-    //                 GedEvent *),
-    DEFINE_PROP_LINK("downstream", AcpiGedState, downstream1, TYPE_MEMORY_REGION,
-                     MemoryRegion *),
-    DEFINE_PROP_UINT32("ged-events-size", AcpiGedState, ged_events_size, 0),
+    DEFINE_PROP_UINT32("ged-event", AcpiGedState, ged_event_bitmap, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
-/*
-static void acpi_ged_instance_init(Object *obj)
-{
-    AcpiGedState *s = ACPI_GED(obj);
 
-    warn_report("%s \n",__func__);
-    object_property_add_link(obj, "newgsi", TYPE_IRQ,
-                                 (Object **)&s->new_gsi,
-                                 object_property_allow_set_link,
-                                 OBJ_PROP_LINK_STRONG,
-                                 &error_abort);
-
-}
-*/
 static void acpi_ged_class_init(ObjectClass *class, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(class);
@@ -313,9 +280,6 @@ static void acpi_ged_class_init(ObjectClass *class, void *data)
     dc->props = acpi_ged_properties;
     dc->realize = acpi_ged_device_realize;
 
-    /* Reason: pointer properties "gsi" and "ged_events" */
-    dc->user_creatable = false;
-
     hc->plug = acpi_ged_device_plug_cb;
 
     adevc->send_event = acpi_ged_send_event;
@@ -325,7 +289,6 @@ static const TypeInfo acpi_ged_info = {
     .name          = TYPE_ACPI_GED,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AcpiGedState),
-//    .instance_init = acpi_ged_instance_init,
     .class_init    = acpi_ged_class_init,
     .interfaces = (InterfaceInfo[]) {
         { TYPE_HOTPLUG_HANDLER },
@@ -334,15 +297,8 @@ static const TypeInfo acpi_ged_info = {
     }
 };
 
-static TypeInfo acpi_ged_prop = {
-    .name = TYPE_GED_PROP,
-    .parent = TYPE_OBJECT,
-    .instance_size = sizeof(struct GedProp),
-};
-
 static void acpi_ged_register_types(void)
 {
-    type_register_static(&acpi_ged_prop);
     type_register_static(&acpi_ged_info);
 }
 
