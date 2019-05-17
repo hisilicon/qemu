@@ -534,7 +534,7 @@ static inline DeviceState *create_acpi_ged(VirtMachineState *vms, qemu_irq *pic)
     object_property_add_child(qdev_get_machine(), "acpi-ged",
                               OBJECT(dev), NULL);
     qdev_init_nofail(dev);
-    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[irq]);
+    qdev_connect_gpio_out_named(dev, "ged-irq", 0, pic[irq]);
 
     return dev;
 }

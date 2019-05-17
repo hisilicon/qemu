@@ -183,9 +183,9 @@ static void acpi_ged_init(MemoryRegion *as, DeviceState *dev, GEDState *ged_st)
     qemu_mutex_init(&ged_st->lock);
 
     memory_region_init_io(&ged_st->io, OBJECT(dev), &ged_ops, ged_st,
-                          "acpi-ged-event", ACPI_GED_REG_LEN);
+                          TYPE_ACPI_GED, ACPI_GED_REG_LEN);
     memory_region_add_subregion(as, s->ged_base, &ged_st->io);
-    sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irq);
+    qdev_init_gpio_out_named(DEVICE(s), &s->irq, "ged-irq", 1);
 }
 
 static void acpi_ged_device_plug_cb(HotplugHandler *hotplug_dev,
