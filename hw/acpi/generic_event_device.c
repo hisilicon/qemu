@@ -44,7 +44,7 @@ static const uint32_t ged_supported_events[] = {
  * with a unique interrupt.
  */
 void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
-                   hwaddr ged_base, uint32_t ged_irq, AmlRegionSpace rs)
+                   uint32_t ged_irq, AmlRegionSpace rs)
 {
     AcpiGedState *s = ACPI_GED(hotplug_dev);
     Aml *crs = aml_resource_template();
@@ -52,6 +52,8 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
     Aml *dev = aml_device("%s", name);
     Aml *irq_sel = aml_local(0);
     Aml *isel = aml_name(AML_GED_IRQ_SEL);
+
+    assert(s->ged_base);
 
     /* _CRS interrupt */
     aml_append(crs, aml_interrupt(AML_CONSUMER, AML_EDGE, AML_ACTIVE_HIGH,
@@ -63,7 +65,7 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
 
     /* Append IO region */
     aml_append(dev, aml_operation_region(AML_GED_IRQ_REG, rs,
-               aml_int(ged_base + ACPI_GED_IRQ_SEL_OFFSET),
+               aml_int(s->ged_base + ACPI_GED_IRQ_SEL_OFFSET),
                ACPI_GED_IRQ_SEL_LEN));
     field = aml_field(AML_GED_IRQ_REG, AML_DWORD_ACC, AML_NOLOCK,
                       AML_WRITE_AS_ZEROS);
@@ -122,6 +124,7 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
                                       aml_int(0x80)));
 		break;
             }
+
             aml_append(evt, if_ctx);
             ged_events--;
         }
@@ -131,7 +134,6 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
             exit(1);
         }
     }
-
 
     /* Append _EVT method */
     aml_append(dev, evt);

@@ -106,6 +106,6 @@ typedef struct AcpiGedState {
 } AcpiGedState;
 
 void build_ged_aml(Aml *table, const char* name, HotplugHandler *hotplug_dev,
-                   hwaddr ged_base, uint32_t ged_irq, AmlRegionSpace rs);
+                   uint32_t ged_irq, AmlRegionSpace rs);
 
 #endif

@@ -1655,7 +1655,11 @@ static void machvirt_init(MachineState *machine)
 
     create_pcie(vms, pic);
 
-    create_gpio(vms, pic);
+    if (!aarch64 || !acpi_enabled || !firmware_loaded) {
+        create_gpio(vms, pic);
+    } else {
+        vms->acpi_dev = create_acpi_ged(vms, pic);
+    }
 
     /* Create mmio transports, so the user can create virtio backends
      * (which will be automatically plugged in to the transports). If
@@ -1667,8 +1671,6 @@ static void machvirt_init(MachineState *machine)
     rom_set_fw(vms->fw_cfg);
 
     create_platform_bus(vms, pic);
-
-    vms->acpi_dev = create_acpi_ged(vms, pic);
 
     vms->bootinfo.ram_size = machine->ram_size;
     vms->bootinfo.kernel_filename = machine->kernel_filename;
