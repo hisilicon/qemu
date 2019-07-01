@@ -290,8 +290,16 @@ typedef struct MemoryRegionClass {
 
 
 enum IOMMUMemoryRegionAttr {
-    IOMMU_ATTR_SPAPR_TCE_FD
+    IOMMU_ATTR_SPAPR_TCE_FD,
+    IOMMU_ATTR_VFIO_NESTED,
+    IOMMU_ATTR_IOMMUFD_DATA,
 };
+
+typedef struct IOMMUFDNestedData {
+    uint32_t type;
+    uint32_t len;
+    void *ptr;
+} IOMMUFDNestedData;
 
 /*
  * IOMMUMemoryRegionClass:
