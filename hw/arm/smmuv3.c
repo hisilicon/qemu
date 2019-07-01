@@ -1553,6 +1553,40 @@ static int smmuv3_notify_flag_changed(IOMMUMemoryRegion *iommu,
     return 0;
 }
 
+static struct iommu_hwpt_arm_smmuv3 smmuv3_nested_data = {
+    .flags = IOMMU_SMMUV3_FLAG_S2,
+};
+
+static int smmuv3_get_attr(IOMMUMemoryRegion *iommu,
+                           enum IOMMUMemoryRegionAttr attr,
+                           void *data)
+{
+    SMMUDevice *sdev = container_of(iommu, SMMUDevice, iommu);
+    SMMUv3State *s3 = sdev->smmu;
+    SMMUState *s = &(s3->smmu_state);
+
+    if (!s->iommufd) {
+        return -EINVAL;
+    }
+
+    if (attr == IOMMU_ATTR_VFIO_NESTED) {
+        *(bool *) data = s->iommufd;
+        return 0;
+    }
+
+    if (attr == IOMMU_ATTR_IOMMUFD_DATA) {
+        IOMMUFDNestedData nested_data = {
+            .type = IOMMU_DEVICE_DATA_ARM_SMMUV3,
+            .len = sizeof(smmuv3_nested_data),
+            .ptr = &smmuv3_nested_data,
+	};
+        *(IOMMUFDNestedData *) data = nested_data;
+        return 0;
+    }
+
+    return -EINVAL;
+}
+
 static void smmuv3_iommu_memory_region_class_init(ObjectClass *klass,
                                                   void *data)
 {
@@ -1560,6 +1594,7 @@ static void smmuv3_iommu_memory_region_class_init(ObjectClass *klass,
 
     imrc->translate = smmuv3_translate;
     imrc->notify_flag_changed = smmuv3_notify_flag_changed;
+    imrc->get_attr = smmuv3_get_attr;
 }
 
 static const TypeInfo smmuv3_type_info = {
