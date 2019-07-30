@@ -3685,6 +3685,14 @@ done:
     return true;
 }
 
+static bool vtd_process_page_group_response(IntelIOMMUState *s,
+                                            VTDInvDesc *inv_desc)
+{
+    printf("%s: page response: hi=0x%lx lo=0x%lx\n"
+           , __func__, inv_desc->val[1], inv_desc->val[0]);
+    return true;
+}
+
 static bool vtd_process_inv_desc(IntelIOMMUState *s)
 {
     VTDInvDesc inv_desc;
@@ -3757,6 +3765,12 @@ static bool vtd_process_inv_desc(IntelIOMMUState *s)
         }
         break;
 
+    case VTD_INV_PAGE_GROUP_RESP:
+        trace_vtd_inv_desc("GrpPgResp", inv_desc.hi, inv_desc.lo);
+        if (!vtd_process_page_group_response(s, &inv_desc)) {
+            return false;
+        }
+        break;
     default:
         error_report_once("%s: invalid inv desc: hi=%"PRIx64", lo=%"PRIx64
                           " (unknown type)", __func__, inv_desc.hi,
