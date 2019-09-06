@@ -302,8 +302,8 @@ else {
                                  PC_MACHINE_ACPI_DEVICE_PROP, &error_abort);
     }
 
-    if (machine->nvdimm_state->is_enabled) {
-        NVDIMMState *nvdimm_state = machine->nvdimm_state;
+    if (machine->nvdimms_state->is_enabled) {
+        NVDIMMState *nvdimm_state = machine->nvdimms_state;
 
         nvdimm_state->dsm_io.type = NVDIMM_ACPI_IO_PORT;
         nvdimm_state->dsm_io.base = NVDIMM_ACPI_IO_BASE;
