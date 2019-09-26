@@ -5590,7 +5590,7 @@ static Property vtd_properties[] = {
     DEFINE_PROP_UINT8("aw-bits", IntelIOMMUState, aw_bits,
                       VTD_HOST_ADDRESS_WIDTH),
     DEFINE_PROP_BOOL("caching-mode", IntelIOMMUState, caching_mode, FALSE),
-    DEFINE_PROP_BOOL("x-scalable-mode", IntelIOMMUState, scalable_mode, FALSE),
+    DEFINE_PROP_STRING("x-scalable-mode", IntelIOMMUState, scalable_mode_str),
     DEFINE_PROP_BOOL("snoop-control", IntelIOMMUState, snoop_control, false),
     DEFINE_PROP_BOOL("dma-drain", IntelIOMMUState, dma_drain, true),
     DEFINE_PROP_END_OF_LIST(),
@@ -6029,6 +6029,8 @@ static int vtd_dev_set_iommu_device(PCIBus *bus, void *opaque,
     VTDIOMMUFDDevice *vtd_idev;
 
     assert(0 <= devfn && devfn < PCI_DEVFN_MAX);
+    /* only modern scalable supports unset_iommu_device */
+    assert(s->scalable_modern);
 
     if (dev && !strcmp(dev->name, "vfio-pci")) {
         bus = pci_get_bus(dev);
@@ -6069,6 +6071,8 @@ static void vtd_dev_unset_iommu_device(PCIBus *bus, void *opaque,
     VTDIOMMUFDDevice *vtd_idev;
 
     assert(0 <= devfn && devfn < PCI_DEVFN_MAX);
+    /* only modern scalable supports set_iommu_device */
+    assert(s->scalable_modern);
 
     if (dev && !strcmp(dev->name, "vfio-pci")) {
         bus = pci_get_bus(dev);
@@ -6291,8 +6295,17 @@ static void vtd_init(IntelIOMMUState *s)
     }
 
     /* TODO: read cap/ecap from host to decide which cap to be exposed. */
-    if (s->scalable_mode) {
+    if (s->scalable_mode && !s->scalable_modern) {
         s->ecap |= VTD_ECAP_SMTS | VTD_ECAP_SRS | VTD_ECAP_SLTS;
+    } else if (s->scalable_mode && s->scalable_modern) {
+        s->ecap |= VTD_ECAP_SMTS | VTD_ECAP_SRS | VTD_ECAP_PASID |
+                   VTD_ECAP_PSS(VTD_PASID_SS) | VTD_ECAP_VCS  | VTD_ECAP_PRS |
+                   VTD_ECAP_EAFS;
+        if (s->aw_bits == VTD_HOST_AW_48BIT) {
+            s->ecap |= VTD_ECAP_FLTS;
+            s->cap |= VTD_CAP_FL1GP | VTD_CAP_FL5LP;
+        }
+        s->vccap |= VTD_VCCAP_PAS;
     }
 
     if (!s->cap_finalized) {
@@ -6462,6 +6475,33 @@ static bool vtd_decide_config(IntelIOMMUState *s, Error **errp)
         return false;
     }
 
+    if (s->scalable_mode_str &&
+        (strcmp(s->scalable_mode_str, "off") &&
+         strcmp(s->scalable_mode_str, "modern") &&
+         strcmp(s->scalable_mode_str, "legacy"))) {
+        error_setg(errp, "Invalid x-scalable-mode config,"
+                         "Please use \"modern\", \"legacy\" or \"off\"");
+        return false;
+    }
+
+    if (s->scalable_mode_str &&
+        !strcmp(s->scalable_mode_str, "legacy")) {
+        s->scalable_mode = true;
+        s->scalable_modern = false;
+    } else if (s->scalable_mode_str &&
+        !strcmp(s->scalable_mode_str, "modern")) {
+        s->iommufd = iommufd_get();
+        if (s->iommufd < 0) {
+            error_setg(errp, "Failed to get iommufd, %m");
+            return false;
+        }
+        s->scalable_mode = true;
+        s->scalable_modern = true;
+    } else {
+        s->scalable_mode = false;
+        s->scalable_modern = false;
+    }
+
     return true;
 }
 
@@ -6554,7 +6594,6 @@ static void vtd_realize(DeviceState *dev, Error **errp)
                                             vtd_pasid_as_key_equal,
                                             g_free, g_free);
     s->next_idx = 0;
-    s->iommufd = iommufd_get();
     vtd_init(s);
     if (likely(!(s->ecap & VTD_ECAP_RPS))) {
         VTDPASIDStoreEntry *entry;
