@@ -523,11 +523,11 @@ void build_cpus_aml(Aml *table, MachineState *machine, CPUHotplugFeatures opts,
                 aml_append(dev, aml_name_decl("_HID", aml_string("ACPI0007")));
                 aml_append(dev, aml_name_decl("_UID", uid));
             }
-#if 0
+
             method = aml_method("_STA", 0, AML_SERIALIZED);
             aml_append(method, aml_return(aml_call1(CPU_STS_METHOD, uid)));
             aml_append(dev, method);
-#endif
+
             /* build _MAT object */
             assert(adevc && adevc->madt_cpu);
             adevc->madt_cpu(adev, i, arch_ids, madt_buf);
