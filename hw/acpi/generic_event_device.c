@@ -307,7 +307,7 @@ static void acpi_ged_initfn(Object *obj)
      memory_region_init(&s->container_cpuhp, OBJECT(dev), "cpu-container",
                         ACPI_CPU_HOTPLUG_REG_LEN);
      sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->container_cpuhp);
-     cpu_hotplug_hw_init(&s->container_memhp, s->cpuhp.device,
+     cpu_hotplug_hw_init(&s->container_cpuhp, s->cpuhp.device,
                          &s->cpuhp_state, 0);
 }
 
