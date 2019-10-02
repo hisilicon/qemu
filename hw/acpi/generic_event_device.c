@@ -13,6 +13,7 @@
 #include "qapi/error.h"
 #include "exec/address-spaces.h"
 #include "hw/acpi/acpi.h"
+#include "hw/acpi/cpu.h"
 #include "hw/acpi/generic_event_device.h"
 #include "hw/irq.h"
 #include "hw/mem/pc-dimm.h"
@@ -25,6 +26,7 @@ static const uint32_t ged_supported_events[] = {
     ACPI_GED_MEM_HOTPLUG_EVT,
     ACPI_GED_PWR_DOWN_EVT,
     ACPI_GED_NVDIMM_HOTPLUG_EVT,
+    ACPI_GED_CPU_HOTPLUG_EVT,
 };
 
 /*
@@ -117,6 +119,9 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
                            aml_notify(aml_name("\\_SB.NVDR"),
                                       aml_int(0x80)));
                 break;
+            case ACPI_GED_CPU_HOTPLUG_EVT:
+                aml_append(if_ctx, aml_call0("\\_SB.CPUS." "CSCN"));
+                break;
             default:
                 /*
                  * Please make sure all the events in ged_supported_events[]
@@ -181,7 +186,9 @@ static void acpi_ged_device_plug_cb(HotplugHandler *hotplug_dev,
 {
     AcpiGedState *s = ACPI_GED(hotplug_dev);
 
-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+    if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
+        acpi_cpu_plug_cb(hotplug_dev, &s->cpuhp_state, dev, errp);
+    } else if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
         if (object_dynamic_cast(OBJECT(dev), TYPE_NVDIMM)) {
             nvdimm_acpi_plug_cb(hotplug_dev, dev);
         } else {
@@ -191,6 +198,13 @@ static void acpi_ged_device_plug_cb(HotplugHandler *hotplug_dev,
         error_setg(errp, "virt: device plug request for unsupported device"
                    " type: %s", object_get_typename(OBJECT(dev)));
     }
+}
+
+static void acpi_ged_ospm_status(AcpiDeviceIf *adev, ACPIOSTInfoList ***list)
+{
+    AcpiGedState *s = ACPI_GED(adev);
+
+    acpi_cpu_ospm_status(&s->cpuhp_state, list);
 }
 
 static void acpi_ged_send_event(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
@@ -205,6 +219,8 @@ static void acpi_ged_send_event(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
         sel = ACPI_GED_PWR_DOWN_EVT;
     } else if (ev & ACPI_NVDIMM_HOTPLUG_STATUS) {
         sel = ACPI_GED_NVDIMM_HOTPLUG_EVT;
+    } else if (ev & ACPI_CPU_HOTPLUG_STATUS) {
+        sel = ACPI_GED_CPU_HOTPLUG_EVT;
     } else {
         /* Unknown event. Return without generating interrupt. */
         warn_report("GED: Unsupported event %d. No irq injected", ev);
@@ -286,6 +302,13 @@ static void acpi_ged_initfn(Object *obj)
      sysbus_init_mmio(sbd, &s->container_memhp);
      acpi_memory_hotplug_init(&s->container_memhp, OBJECT(dev),
                               &s->memhp_state, 0);
+
+     s->cpuhp.device = OBJECT(s);
+     memory_region_init(&s->container_cpuhp, OBJECT(dev), "cpu-container",
+                        ACPI_CPU_HOTPLUG_REG_LEN);
+     sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->container_cpuhp);
+     cpu_hotplug_hw_init(&s->container_memhp, s->cpuhp.device,
+                         &s->cpuhp_state, 0);
 }
 
 static void acpi_ged_class_init(ObjectClass *class, void *data)
@@ -301,6 +324,7 @@ static void acpi_ged_class_init(ObjectClass *class, void *data)
     hc->plug = acpi_ged_device_plug_cb;
 
     adevc->send_event = acpi_ged_send_event;
+    adevc->ospm_status = acpi_ged_ospm_status;
 }
 
 static const TypeInfo acpi_ged_info = {

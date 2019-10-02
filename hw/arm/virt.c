@@ -144,6 +144,7 @@ static const MemMapEntry base_memmap[] = {
     [VIRT_PCDIMM_ACPI] =        { 0x09070000, MEMORY_HOTPLUG_IO_LEN },
     [VIRT_ACPI_GED] =           { 0x09080000, ACPI_GED_EVT_SEL_LEN },
     [VIRT_NVDIMM_ACPI] =        { 0x09090000, NVDIMM_ACPI_IO_LEN},
+    [VIRT_CPUHP_ACPI] =         { 0x090a0000, ACPI_CPU_HOTPLUG_REG_LEN},
     [VIRT_MMIO] =               { 0x0a000000, 0x00000200 },
     /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
     [VIRT_PLATFORM_BUS] =       { 0x0c000000, 0x02000000 },
@@ -536,8 +537,9 @@ static inline DeviceState *create_acpi_ged(VirtMachineState *vms, qemu_irq *pic)
 {
     DeviceState *dev;
     MachineState *ms = MACHINE(vms);
+    AcpiDeviceIfClass *adevc;
     int irq = vms->irqmap[VIRT_ACPI_GED];
-    uint32_t event = ACPI_GED_PWR_DOWN_EVT;
+    uint32_t event = ACPI_GED_PWR_DOWN_EVT | ACPI_GED_CPU_HOTPLUG_EVT;
 
     if (ms->ram_slots) {
         event |= ACPI_GED_MEM_HOTPLUG_EVT;
@@ -552,9 +554,13 @@ static inline DeviceState *create_acpi_ged(VirtMachineState *vms, qemu_irq *pic)
 
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, vms->memmap[VIRT_ACPI_GED].base);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 1, vms->memmap[VIRT_PCDIMM_ACPI].base);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, vms->memmap[VIRT_CPUHP_ACPI].base);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[irq]);
 
     qdev_init_nofail(dev);
+
+    adevc = ACPI_DEVICE_IF_GET_CLASS(dev);
+    adevc->madt_cpu = arm_virt_madt_cpu_entry;
 
     return dev;
 }
@@ -1078,7 +1084,7 @@ static bool virt_firmware_init(VirtMachineState *vms,
     return pflash_blk0 || bios_name;
 }
 
-static FWCfgState *create_fw_cfg(const VirtMachineState *vms, AddressSpace *as)
+static FWCfgState *create_fw_cfg(VirtMachineState *vms, AddressSpace *as)
 {
     MachineState *ms = MACHINE(vms);
     hwaddr base = vms->memmap[VIRT_FW_CFG].base;
@@ -1088,6 +1094,7 @@ static FWCfgState *create_fw_cfg(const VirtMachineState *vms, AddressSpace *as)
 
     fw_cfg = fw_cfg_init_mem_wide(base + 8, base, 8, base + 16, as);
     fw_cfg_add_i16(fw_cfg, FW_CFG_NB_CPUS, (uint16_t)ms->smp.cpus);
+    vms->boot_cpus = (uint16_t)ms->smp.cpus;
 
     nodename = g_strdup_printf("/fw-cfg@%" PRIx64, base);
     qemu_fdt_add_subnode(vms->fdt, nodename);
@@ -1948,6 +1955,36 @@ static void virt_memory_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     pc_dimm_pre_plug(PC_DIMM(dev), MACHINE(hotplug_dev), NULL, errp);
 }
 
+static void virt_cpu_plug(HotplugHandler *hotplug_dev,
+                          DeviceState *dev, Error **errp)
+{
+    Error *local_err = NULL;
+    VirtMachineState *vms = VIRT_MACHINE(hotplug_dev);
+    HotplugHandlerClass *hhc;
+
+    /*ToDo: validate cpu id */
+
+    /* We only support ACPI CPU hotplug/unplug */
+    assert(vms->acpi_dev);
+
+    /* Call ACPI hotplug */
+    hhc = HOTPLUG_HANDLER_GET_CLASS(vms->acpi_dev);
+    hhc->plug(HOTPLUG_HANDLER(vms->acpi_dev), dev, &local_err);
+    if (local_err) {
+        goto out;
+    }
+
+    /* Increment the number of CPUs */
+    vms->boot_cpus++;
+
+    if (vms->fw_cfg) {
+        fw_cfg_modify_i16(vms->fw_cfg, FW_CFG_NB_CPUS, vms->boot_cpus);
+    }
+out:
+    error_propagate(errp, local_err);
+}
+
+
 static void virt_memory_plug(HotplugHandler *hotplug_dev,
                              DeviceState *dev, Error **errp)
 {
@@ -1993,6 +2030,8 @@ static void virt_machine_device_plug_cb(HotplugHandler *hotplug_dev,
     }
     if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
         virt_memory_plug(hotplug_dev, dev, errp);
+    } else if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
+        virt_cpu_plug(hotplug_dev, dev, errp);
     }
 }
 
@@ -2077,6 +2116,7 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
     mc->numa_mem_supported = true;
     mc->nvdimm_supported = true;
     mc->auto_enable_numa_with_memhp = true;
+    mc->has_hotpluggable_cpus = true;
 }
 
 static void virt_instance_init(Object *obj)

@@ -52,18 +52,6 @@
 
 #define ARM_SPI_BASE 32
 
-static void acpi_dsdt_add_cpus(Aml *scope, int smp_cpus)
-{
-    uint16_t i;
-
-    for (i = 0; i < smp_cpus; i++) {
-        Aml *dev = aml_device("C%.03X", i);
-        aml_append(dev, aml_name_decl("_HID", aml_string("ACPI0007")));
-        aml_append(dev, aml_name_decl("_UID", aml_int(i)));
-        aml_append(scope, dev);
-    }
-}
-
 static void acpi_dsdt_add_uart(Aml *scope, const MemMapEntry *uart_memmap,
                                            uint32_t uart_irq)
 {
@@ -592,6 +580,34 @@ build_gtdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
                  (void *)(table_data->data + gtdt_start), "GTDT",
                  table_data->len - gtdt_start, 2, NULL, NULL);
 }
+/* ToDo: Check we really need to pass cpu_list here */
+void arm_virt_madt_cpu_entry(AcpiDeviceIf *adev, int uid,
+                             const CPUArchIdList *cpu_list, GArray *table_data)
+{
+    VirtMachineState *vms = VIRT_MACHINE(qdev_get_machine());
+    const MemMapEntry *memmap = vms->memmap;
+    AcpiMadtGenericCpuInterface *gicc = acpi_data_push(table_data,
+                                                       sizeof(*gicc));
+    ARMCPU *armcpu = ARM_CPU(qemu_get_cpu(uid));
+    gicc->type = ACPI_APIC_GENERIC_CPU_INTERFACE;
+    gicc->length = sizeof(*gicc);
+    if (vms->gic_version == 2) {
+        gicc->base_address = cpu_to_le64(memmap[VIRT_GIC_CPU].base);
+        gicc->gich_base_address = cpu_to_le64(memmap[VIRT_GIC_HYP].base);
+        gicc->gicv_base_address = cpu_to_le64(memmap[VIRT_GIC_VCPU].base);
+    }
+    gicc->cpu_interface_number = cpu_to_le32(uid);
+    gicc->arm_mpidr = cpu_to_le64(armcpu->mp_affinity);
+    gicc->uid = cpu_to_le32(uid);
+    gicc->flags = cpu_to_le32(ACPI_MADT_GICC_ENABLED);
+
+    if (arm_feature(&armcpu->env, ARM_FEATURE_PMU)) {
+        gicc->performance_interrupt = cpu_to_le32(PPI(VIRTUAL_PMU_IRQ));
+    }
+    if (vms->virt) {
+        gicc->vgic_interrupt = cpu_to_le32(PPI(ARCH_GIC_MAINT_IRQ));
+    }
+}
 
 /* MADT */
 static void
@@ -604,6 +620,11 @@ build_madt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
     AcpiMultipleApicTable *madt;
     AcpiMadtGenericDistributor *gicd;
     AcpiMadtGenericMsiFrame *gic_msi;
+    AcpiDeviceIfClass *adevc = ACPI_DEVICE_IF_GET_CLASS(vms->acpi_dev);
+    AcpiDeviceIf *adev = ACPI_DEVICE_IF(vms->acpi_dev);
+    MachineClass *mc = MACHINE_GET_CLASS(vms);
+    MachineState *ms = MACHINE(vms);
+    const CPUArchIdList *cpu_list = mc->possible_cpu_arch_ids(ms);
     int i;
 
     madt = acpi_data_push(table_data, sizeof *madt);
@@ -615,28 +636,7 @@ build_madt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
     gicd->version = vms->gic_version;
 
     for (i = 0; i < vms->smp_cpus; i++) {
-        AcpiMadtGenericCpuInterface *gicc = acpi_data_push(table_data,
-                                                           sizeof(*gicc));
-        ARMCPU *armcpu = ARM_CPU(qemu_get_cpu(i));
-
-        gicc->type = ACPI_APIC_GENERIC_CPU_INTERFACE;
-        gicc->length = sizeof(*gicc);
-        if (vms->gic_version == 2) {
-            gicc->base_address = cpu_to_le64(memmap[VIRT_GIC_CPU].base);
-            gicc->gich_base_address = cpu_to_le64(memmap[VIRT_GIC_HYP].base);
-            gicc->gicv_base_address = cpu_to_le64(memmap[VIRT_GIC_VCPU].base);
-        }
-        gicc->cpu_interface_number = cpu_to_le32(i);
-        gicc->arm_mpidr = cpu_to_le64(armcpu->mp_affinity);
-        gicc->uid = cpu_to_le32(i);
-        gicc->flags = cpu_to_le32(ACPI_MADT_GICC_ENABLED);
-
-        if (arm_feature(&armcpu->env, ARM_FEATURE_PMU)) {
-            gicc->performance_interrupt = cpu_to_le32(PPI(VIRTUAL_PMU_IRQ));
-        }
-        if (vms->virt) {
-            gicc->vgic_interrupt = cpu_to_le32(PPI(ARCH_GIC_MAINT_IRQ));
-        }
+        adevc->madt_cpu(adev, i, cpu_list, table_data);
     }
 
     if (vms->gic_version == 3) {
@@ -732,7 +732,6 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
      * the RTC ACPI device at all when using UEFI.
      */
     scope = aml_scope("\\_SB");
-    acpi_dsdt_add_cpus(scope, vms->smp_cpus);
     acpi_dsdt_add_uart(scope, &memmap[VIRT_UART],
                        (irqmap[VIRT_UART] + ARM_SPI_BASE));
     acpi_dsdt_add_flash(scope, &memmap[VIRT_FLASH]);
@@ -752,6 +751,10 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
     }
 
     if (vms->acpi_dev) {
+        CPUHotplugFeatures opts = {
+            .acpi_1_compatible = false, .has_legacy_cphp = false
+        };
+
         uint32_t event = object_property_get_uint(OBJECT(vms->acpi_dev),
                                                   "ged-event", &error_abort);
 
@@ -760,6 +763,9 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
                                      AML_SYSTEM_MEMORY,
                                      memmap[VIRT_PCDIMM_ACPI].base);
         }
+
+        build_cpus_aml(scope, ms, opts, memmap[VIRT_CPUHP_ACPI].base,
+                       "\\_SB", NULL, AML_SYSTEM_MEMORY);
     }
 
     acpi_dsdt_add_power_button(scope);

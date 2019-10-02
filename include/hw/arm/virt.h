@@ -37,6 +37,7 @@
 #include "hw/block/flash.h"
 #include "sysemu/kvm.h"
 #include "hw/intc/arm_gicv3_common.h"
+#include "hw/acpi/acpi_dev_interface.h"
 
 #define NUM_GICV2M_SPIS       64
 #define NUM_VIRTIO_TRANSPORTS 32
@@ -80,6 +81,7 @@ enum {
     VIRT_PCDIMM_ACPI,
     VIRT_ACPI_GED,
     VIRT_NVDIMM_ACPI,
+    VIRT_CPUHP_ACPI,
     VIRT_LOWMEMMAP_LAST,
 };
 
@@ -131,6 +133,7 @@ typedef struct {
     int smp_cpus;
     void *fdt;
     int fdt_size;
+    uint16_t boot_cpus;
     uint32_t clock_phandle;
     uint32_t gic_phandle;
     uint32_t msi_phandle;
@@ -164,4 +167,6 @@ static inline int virt_gicv3_redist_region_count(VirtMachineState *vms)
     return vms->smp_cpus > redist0_capacity ? 2 : 1;
 }
 
+void arm_virt_madt_cpu_entry(AcpiDeviceIf *adev, int uid,
+                             const CPUArchIdList *cpu_list, GArray *table_data);
 #endif /* QEMU_ARM_VIRT_H */
