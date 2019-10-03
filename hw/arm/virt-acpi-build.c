@@ -790,6 +790,7 @@ void virt_acpi_build(VirtMachineState *vms, AcpiBuildTables *tables)
     GArray *table_offsets;
     unsigned dsdt, xsdt;
     GArray *tables_blob = tables->table_data;
+    GArray *cmd_blob = tables->linker->cmd_blob;
     MachineState *ms = MACHINE(vms);
 
     table_offsets = g_array_new(false, true /* clear */,
@@ -854,6 +855,19 @@ void virt_acpi_build(VirtMachineState *vms, AcpiBuildTables *tables)
         build_rsdp(tables->rsdp, tables->linker, &rsdp_data);
     }
 
+    /*
+     * Align the ACPI blob lengths to PAGE size so that on ACPI table
+     * regeneration, the length that firmware sees really gets updated
+     * through 'resize' callback in qemu_ram_resize() in the
+     * virt_acpi_build_update() -> acpi_ram_update() -> qemu_ram_resize()
+     * path.
+     */
+    g_array_set_size(tables_blob,
+                     TARGET_PAGE_ALIGN(acpi_data_len(tables_blob)));
+    g_array_set_size(tables->rsdp,
+                     TARGET_PAGE_ALIGN(acpi_data_len(tables->rsdp)));
+    g_array_set_size(cmd_blob,
+                     TARGET_PAGE_ALIGN(acpi_data_len(cmd_blob)));
     /* Cleanup memory that's no longer used. */
     g_array_free(table_offsets, true);
 }
