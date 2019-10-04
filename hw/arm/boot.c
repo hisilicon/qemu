@@ -20,6 +20,7 @@
 #include "hw/boards.h"
 #include "sysemu/reset.h"
 #include "hw/loader.h"
+#include "hw/mem/memory-device.h"
 #include "elf.h"
 #include "sysemu/device_tree.h"
 #include "qemu/config-file.h"
@@ -523,6 +524,44 @@ static void fdt_add_psci_node(void *fdt)
     qemu_fdt_setprop_cell(fdt, "/psci", "migrate", migrate_fn);
 }
 
+static int fdt_add_pmem_node(void *fdt, uint32_t acells, uint32_t scells)
+{
+    MemoryDeviceInfoList *info, *info_list = qmp_memory_device_list();
+    MemoryDeviceInfo *mi;
+    int ret;
+
+    for (info = info_list; info != NULL; info = info->next) {
+        mi = info->value;
+
+        if (mi->type == MEMORY_DEVICE_INFO_KIND_NVDIMM) {
+            PCDIMMDeviceInfo *di = mi->u.nvdimm.data;
+            char *nodename;
+
+            nodename = g_strdup_printf("/pmem@%" PRIx64, di->addr);
+            qemu_fdt_add_subnode(fdt, nodename);
+            qemu_fdt_setprop_string(fdt, nodename, "compatible", "pmem-region");
+            ret = qemu_fdt_setprop_sized_cells(fdt, nodename, "reg", acells,
+                                               di->addr, scells, di->size);
+            /* only set the NUMA ID if it is specified */
+            if (!ret && di->node >= 0) {
+                ret = qemu_fdt_setprop_cell(fdt, nodename, "numa-node-id",
+                                            di->node);
+            }
+
+            g_free(nodename);
+
+            if (ret < 0) {
+                fprintf(stderr, "couldn't add NVDIMM /memory@%"PRIx64" node\n",
+                        di->addr);
+                goto out;
+            }
+        }
+    }
+out:
+    qapi_free_MemoryDeviceInfoList(info_list);
+    return ret;
+}
+
 int arm_load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
                  hwaddr addr_limit, AddressSpace *as, MachineState *ms)
 {
@@ -620,6 +659,12 @@ int arm_load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
                     binfo->loader_start);
             goto fail;
         }
+    }
+
+    rc = fdt_add_pmem_node(fdt, acells, scells);
+    if (rc < 0) {
+        fprintf(stderr, "couldn't add pmem memory nodes\n");
+        goto fail;
     }
 
     rc = fdt_path_offset(fdt, "/chosen");
