@@ -543,6 +543,10 @@ static inline DeviceState *create_acpi_ged(VirtMachineState *vms, qemu_irq *pic)
         event |= ACPI_GED_MEM_HOTPLUG_EVT;
     }
 
+    if (ms->nvdimms_state->is_enabled) {
+        event |= ACPI_GED_NVDIMM_HOTPLUG_EVT;
+    }
+
     dev = qdev_create(NULL, TYPE_ACPI_GED);
     qdev_prop_set_uint32(dev, "ged-event", event);
 
@@ -1938,9 +1942,12 @@ static void virt_memory_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     }
 
     if (!vms->acpi_dev) {
-        error_setg(errp,
-                   "memory hotplug is not enabled: missing acpi-ged device");
-        return;
+        /* Allow nvdimm DT or cold plug */
+        if (!(is_nvdimm && !dev->hotplugged)) {
+            error_setg(errp,
+                       "memory hotplug is not enabled: missing acpi-ged device");
+            return;
+         }
     }
 
     pc_dimm_pre_plug(PC_DIMM(dev), MACHINE(hotplug_dev), NULL, errp);
@@ -1964,8 +1971,10 @@ static void virt_memory_plug(HotplugHandler *hotplug_dev,
         nvdimm_plug(ms->nvdimms_state);
     }
 
-    hhc = HOTPLUG_HANDLER_GET_CLASS(vms->acpi_dev);
-    hhc->plug(HOTPLUG_HANDLER(vms->acpi_dev), dev, &error_abort);
+    if (vms->acpi_dev) {
+        hhc = HOTPLUG_HANDLER_GET_CLASS(vms->acpi_dev);
+        hhc->plug(HOTPLUG_HANDLER(vms->acpi_dev), dev, &error_abort);
+    }
 out:
     error_propagate(errp, local_err);
 }
@@ -2073,6 +2082,7 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
     hc->plug = virt_machine_device_plug_cb;
     hc->unplug_request = virt_machine_device_unplug_request_cb;
     mc->numa_mem_supported = true;
+    mc->nvdimm_supported = true;
     mc->auto_enable_numa_with_memhp = true;
 }
 
