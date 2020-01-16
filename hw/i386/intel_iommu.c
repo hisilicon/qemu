@@ -2062,6 +2062,20 @@ static int vtd_report_iommu_fault(VTDPASIDAddressSpace *vtd_pasid_as,
         prq.priv_data[1] = (IOMMU_FAULT_PAGE_REQUEST_PRIV_DATA
                     & fault->prm.flags) ? fault->prm.private_data[1] : 0x0;
         vtd_report_page_request(s, &prq);
+        qemu_mutex_lock(&s->prq_lock);
+        if (prq.lpig) {
+            VTDPRQEntry *prqe;
+
+            prqe = g_malloc0(sizeof(*prqe));
+            prqe->bus = bus;
+            prqe->devfn = devfn;
+            memcpy(&prqe->prq, &prq, sizeof(prq));
+            /* track the received prqs */
+            QLIST_INSERT_HEAD(&s->vtd_prq_list, prqe, next);
+            printf("%s,last page in group track in list, addr: 0x%lx, groupid: %u, pasid: %u\n",
+                                          __func__, (unsigned long) prq.addr, prq.prg_index, prq.pasid);
+        }
+        qemu_mutex_unlock(&s->prq_lock);
         ret = 0;
         break;
     default:
@@ -3083,6 +3097,24 @@ remove:
 }
 
 /**
+ * This function finds a VTDPASIDAddressSpace for a device + pasid.
+ * Caller of this function should hold iommu_lock.
+ */
+static VTDPASIDAddressSpace *vtd_find_pasid_as(IntelIOMMUState *s,
+                                               VTDBus *vtd_bus,
+                                               int devfn,
+                                               uint32_t pasid)
+{
+    struct pasid_key key;
+    uint16_t sid;
+
+    sid = vtd_make_source_id(pci_bus_num(vtd_bus->bus), devfn);
+    vtd_init_pasid_key(pasid, sid, &key);
+
+    return g_hash_table_lookup(s->vtd_pasid_as, &key);
+}
+
+/**
  * This function finds or adds a VTDPASIDAddressSpace for a device
  * when it is bound to a pasid. Caller of this function should hold
  * iommu_lock.
@@ -3092,16 +3124,14 @@ static VTDPASIDAddressSpace *vtd_add_find_pasid_as(IntelIOMMUState *s,
                                                    int devfn,
                                                    uint32_t pasid)
 {
-    struct pasid_key key;
-    struct pasid_key *new_key;
     VTDPASIDAddressSpace *vtd_pasid_as;
-    uint16_t sid;
 
-    sid = vtd_make_source_id(pci_bus_num(vtd_bus->bus), devfn);
-    vtd_init_pasid_key(pasid, sid, &key);
-    vtd_pasid_as = g_hash_table_lookup(s->vtd_pasid_as, &key);
-
+    vtd_pasid_as = vtd_find_pasid_as(s, vtd_bus, devfn, pasid);
     if (!vtd_pasid_as) {
+        struct pasid_key *new_key;
+        uint16_t sid;
+
+        sid = vtd_make_source_id(pci_bus_num(vtd_bus->bus), devfn);
         new_key = g_malloc0(sizeof(*new_key));
         vtd_init_pasid_key(pasid, sid, new_key);
         /*
@@ -3685,11 +3715,115 @@ done:
     return true;
 }
 
+static VTDBus *vtd_find_add_bus(IntelIOMMUState *s, PCIBus *bus);
+
+static int vtd_dev_send_page_response(IntelIOMMUState *s, PCIBus *bus,
+                                      int devfn,
+                                      struct iommu_page_response *pg_resp)
+{
+    VTDBus *vtd_bus;
+    VTDPASIDAddressSpace *vtd_pasid_as;
+    VTDIOMMUFDDevice *vtd_idev;
+    IOMMUFDDevice *idev;
+    VTDHwpt *hwpt;
+    uint32_t pasid = pg_resp->pasid;
+    int ret = -EINVAL;
+
+    vtd_bus = vtd_find_add_bus(s, bus);
+
+    vtd_iommu_lock(s);
+    vtd_pasid_as = vtd_find_pasid_as(s, vtd_bus, devfn, pasid);
+    if (!vtd_pasid_as) {
+        goto out_unlock;
+    }
+    vtd_idev = vtd_bus->idevs[devfn];
+    if (!vtd_idev || !vtd_idev->idev) {
+        goto out_unlock;
+    }
+
+    hwpt = &vtd_pasid_as->hwpt;
+    idev = vtd_idev->idev;
+    ret = iommufd_page_response(hwpt->iommufd, hwpt->hwpt_id,
+                                idev->dev_id, pg_resp);
+out_unlock:
+    vtd_iommu_unlock(s);
+    return ret;
+}
+
 static bool vtd_process_page_group_response(IntelIOMMUState *s,
                                             VTDInvDesc *inv_desc)
 {
+    struct iommu_page_response pg_resp;
+    VTDPRQEntry *vtd_prq, *tmp;
+    uint32_t pasid, hpasid;
+
     printf("%s: page response: hi=0x%lx lo=0x%lx\n"
            , __func__, inv_desc->val[1], inv_desc->val[0]);
+    /* Today only support page request with PASID, so the same with response */
+    if (!inv_desc->resp.pasid_present) {
+        return false;
+    }
+
+    vtd_iommu_lock(s);
+    hpasid = pasid = inv_desc->resp.pasid;
+    if (vtd_hpasid_find_by_guest(s, &hpasid)) {
+        error_report("%s, invalid response pasid: %d!\n", __func__, pasid);
+        return false;
+    }
+    vtd_iommu_unlock(s);
+
+    /*
+     * REVISIT: private data from the guest is not sent back with
+     * the page response in that host is tracking the private and
+     * response is in order. Host IOMMU driver will match the private
+     * data then respond back to the IOMMU hardware.
+     */
+    pg_resp.argsz = sizeof(pg_resp);
+    pg_resp.version = IOMMU_PAGE_RESP_VERSION_1;
+    pg_resp.code = inv_desc->resp.resp_code;
+    pg_resp.grpid = inv_desc->resp.grpid;
+    pg_resp.pasid = hpasid;
+    pg_resp.flags = IOMMU_PAGE_RESP_PASID_VALID;
+    printf("%s, PASID %d pg_resp flags %x\n", __func__, pg_resp.pasid, pg_resp.flags);
+
+    /*
+     * YI: TODO: needs to do lpig and prg_index check in the prq
+     * filtering. May just like what kernel does. How about pdp?
+     * Should a pdp match also mean a hit? Will there be multiple
+     *  prqs in the list with the same pasid?
+     */
+    qemu_mutex_lock(&s->prq_lock);
+    QLIST_FOREACH_SAFE(vtd_prq, &s->vtd_prq_list, next, tmp) {
+        if ((vtd_prq->prq.rid == inv_desc->resp.rid) &&
+            (vtd_prq->prq.prg_index == inv_desc->resp.grpid)) {
+            if ((vtd_prq->prq.pasid_present != inv_desc->resp.pasid_present) ||
+                (inv_desc->resp.pasid_present &&
+                                 vtd_prq->prq.pasid != inv_desc->resp.pasid)) {
+                continue;
+            }
+            /*
+             * Yi: if response failed, should return error to guest.
+             * Que: shoud vIOMMU assume there will be multiple matched
+             * prqs in the list? may be not as only prqs with lpig or
+             * private data is added in the prq_list. Also one response
+             * should response one prq. Only when the response succeed
+             * , should the prq be freed in this list in case of guest
+             * does retry.
+             */
+            printf("%s, try to response PASID %d grpid %u\n", __func__, pg_resp.pasid, pg_resp.grpid);
+            if (!vtd_dev_send_page_response(s, vtd_prq->bus,
+                                            vtd_prq->devfn, &pg_resp)) {
+                QLIST_REMOVE(vtd_prq, next);
+                g_free(vtd_prq);
+            } else {
+                error_report_once("%s: page response failed, resp_desc: "
+                          "hi=%"PRIx64", lo=%"PRIx64, __func__,
+                          inv_desc->val[1], inv_desc->val[0]);
+            }
+            break;
+        }
+    }
+    qemu_mutex_unlock(&s->prq_lock);
     return true;
 }
 
@@ -5716,6 +5850,7 @@ static void vtd_realize(DeviceState *dev, Error **errp)
 
     QLIST_INIT(&s->vtd_as_with_notifiers);
     QLIST_INIT(&s->vtd_idev_list);
+    QLIST_INIT(&s->vtd_prq_list);
     qemu_mutex_init(&s->iommu_lock);
     qemu_mutex_init(&s->prq_lock);
     s->cap_finalized = false;

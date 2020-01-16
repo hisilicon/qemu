@@ -394,6 +394,25 @@ struct VTDInvDescIEC {
 };
 typedef struct VTDInvDescIEC VTDInvDescIEC;
 
+struct VTDInvDescResp {
+    uint64_t type:4;     /* Should always be 0x9 */
+    uint64_t pasid_present:1;
+    uint64_t pdp:1;
+    uint64_t rsvd0:3;
+    uint64_t type_con:3; /* should be 0 */
+    uint64_t resp_code:4;
+    uint64_t rid:16;
+    uint64_t pasid:20;
+    uint64_t rsvd1:12;
+    uint64_t rsvd2:2;
+    uint64_t lpig:1;     /* If set, it's the last request in a group */
+    uint64_t grpid:9;
+    uint64_t rsvd3:52;
+   uint64_t priv_data[2];
+};
+typedef struct VTDInvDescResp VTDInvDescResp;
+
+ /* Queued Invalidation Descriptor */
 /* Queued Invalidation Descriptor */
 union VTDInvDesc {
     struct {
@@ -405,6 +424,9 @@ union VTDInvDesc {
     };
     union {
         VTDInvDescIEC iec;
+    };
+    union {
+        VTDInvDescResp resp;
     };
 };
 typedef union VTDInvDesc VTDInvDesc;
