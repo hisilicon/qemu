@@ -168,7 +168,7 @@ struct VTDBus {
 struct VTDIOTLBEntry {
     uint64_t gfn;
     uint16_t domain_id;
-    uint64_t slpte;
+    uint64_t pte;
     uint64_t mask;
     uint8_t access_flags;
 };
