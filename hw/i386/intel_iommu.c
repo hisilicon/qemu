@@ -3345,16 +3345,124 @@ static bool vtd_process_pasid_desc(IntelIOMMUState *s,
     return !pc_info.error_happened ? true : false;
 }
 
+/**
+ * Caller of this function should hold iommu_lock.
+ */
+static void vtd_invalidate_piotlb(VTDPASIDAddressSpace *vtd_pasid_as,
+                                  struct iommu_hwpt_invalidate_intel_vtd *cache)
+{
+    VTDBus *vtd_bus = vtd_pasid_as->vtd_bus;
+    VTDIOMMUFDDevice *vtd_idev;
+    VTDHwpt *hwpt = &vtd_pasid_as->hwpt;
+    int devfn = vtd_pasid_as->devfn;
+
+    if (!hwpt) {
+        goto out;
+    }
+    vtd_idev = vtd_bus->idevs[devfn];
+    if (!vtd_idev || !vtd_idev->idev) {
+        goto out;
+    }
+    if (iommufd_backend_invalidate_cache(hwpt->iommufd, hwpt->hwpt_id, IOMMU_DEVICE_DATA_INTEL_VTD, sizeof(*cache), cache)) {
+        error_report("Cache flush failed");
+    }
+out:
+    return;
+}
+
+/**
+ * This function is a loop function for the s->vtd_pasid_as
+ * list with VTDPIOTLBInvInfo as execution filter. It propagates
+ * the piotlb invalidation to host. Caller of this function
+ * should hold iommu_lock.
+ */
+static void vtd_flush_pasid_iotlb(gpointer key, gpointer value,
+                                  gpointer user_data)
+{
+    VTDPIOTLBInvInfo *piotlb_info = user_data;
+    VTDPASIDAddressSpace *vtd_pasid_as = value;
+    VTDPASIDCacheEntry *pc_entry = &vtd_pasid_as->pasid_cache_entry;
+    uint16_t did;
+
+    did = vtd_pe_get_domain_id(&pc_entry->pasid_entry);
+
+    if ((piotlb_info->domain_id == did) &&
+        (piotlb_info->pasid == vtd_pasid_as->pasid)) {
+        vtd_invalidate_piotlb(vtd_pasid_as,
+                              piotlb_info->cache_info);
+    }
+
+    /*
+     * TODO: needs to add QEMU piotlb flush when QEMU piotlb
+     * infrastructure is ready. For now, it is enough for passthru
+     * devices.
+     */
+}
+
 static void vtd_piotlb_pasid_invalidate(IntelIOMMUState *s,
                                         uint16_t domain_id,
                                         uint32_t pasid)
 {
+    VTDPIOTLBInvInfo piotlb_info;
+    struct iommu_hwpt_invalidate_intel_vtd *cache_info;
+
+    cache_info = g_malloc0(sizeof(*cache_info));
+
+    cache_info->version = IOMMU_VTD_QI_INFO_VERSION_1;
+    cache_info->cache = IOMMU_VTD_QI_TYPE_IOTLB;
+    cache_info->granularity = IOMMU_VTD_QI_GRAN_PASID;
+    cache_info->pasid = pasid;
+    cache_info->flags = IOMMU_VTD_QI_FLAGS_PASID;
+
+    piotlb_info.domain_id = domain_id;
+    piotlb_info.pasid = pasid;
+    piotlb_info.cache_info = cache_info;
+
+    vtd_iommu_lock(s);
+    /*
+     * Here loops all the vtd_pasid_as instances in s->vtd_pasid_as
+     * to find out the affected devices since piotlb invalidation
+     * should check pasid cache per architecture point of view.
+     */
+    g_hash_table_foreach(s->vtd_pasid_as,
+                         vtd_flush_pasid_iotlb, &piotlb_info);
+    vtd_iommu_unlock(s);
+    g_free(cache_info);
 }
 
 static void vtd_piotlb_page_invalidate(IntelIOMMUState *s, uint16_t domain_id,
                                        uint32_t pasid, hwaddr addr, uint8_t am,
                                        bool ih)
 {
+    VTDPIOTLBInvInfo piotlb_info;
+    struct iommu_hwpt_invalidate_intel_vtd *cache_info;
+
+    cache_info = g_malloc0(sizeof(*cache_info));
+
+    cache_info->version = IOMMU_VTD_QI_INFO_VERSION_1;
+    cache_info->cache = IOMMU_VTD_QI_TYPE_IOTLB;
+    cache_info->granularity = IOMMU_VTD_QI_GRAN_ADDR;
+    cache_info->flags = IOMMU_VTD_QI_FLAGS_PASID;
+    cache_info->flags |= ih ? IOMMU_VTD_QI_FLAGS_LEAF : 0;
+    cache_info->pasid = pasid;
+    cache_info->addr = addr;
+    cache_info->granule_size = 1 << (12 + am);
+    cache_info->nb_granules = 1;
+
+    piotlb_info.domain_id = domain_id;
+    piotlb_info.pasid = pasid;
+    piotlb_info.cache_info = cache_info;
+
+    vtd_iommu_lock(s);
+    /*
+     * Here loops all the vtd_pasid_as instances in s->vtd_pasid_as
+     * to find out the affected devices since piotlb invalidation
+     * should check pasid cache per architecture point of view.
+     */
+    g_hash_table_foreach(s->vtd_pasid_as,
+                         vtd_flush_pasid_iotlb, &piotlb_info);
+    vtd_iommu_unlock(s);
+    g_free(cache_info);
 }
 
 static bool vtd_process_piotlb_desc(IntelIOMMUState *s,
