@@ -248,7 +248,7 @@ static void smmuv3_init_regs(SMMUv3State *s)
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, COHACC, 1); /* IO coherent */
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, ASID16, 1); /* 16-bit ASID */
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, TTENDIAN, 2); /* little endian */
-    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, STALL_MODEL, 1); /* No stall */
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, STALL_MODEL, 0); /* stall */
     /* terminated transaction will always be aborted/error returned */
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, TERM_MODEL, 1);
     /* 2-level stream table supported */
@@ -345,17 +345,9 @@ static int decode_ste(SMMUv3State *s, SMMUTransCfg *cfg,
         goto bad_ste;
     }
 
-    if (STE_S1CDMAX(ste) != 0) {
-        qemu_log_mask(LOG_UNIMP,
-                      "SMMUv3 does not support multiple context descriptors yet\n");
-        goto bad_ste;
-    }
-
-    if (STE_S1STALLD(ste)) {
-        qemu_log_mask(LOG_UNIMP,
-                      "SMMUv3 S1 stalling fault model not allowed yet\n");
-        goto bad_ste;
-    }
+    cfg->s1cdmax = STE_S1CDMAX(ste);
+    cfg->s1fmt = STE_S1FMT(ste);
+    cfg->s1dss =  STE_S1DSS(ste);
     cfg->s1ctxptr = STE_CTXPTR(ste);
     return 0;
 
@@ -466,9 +458,6 @@ static int decode_cd(SMMUTransCfg *cfg, CD *cd, SMMUEventInfo *event)
     }
     if (!CD_A(cd)) {
         goto bad_cd; /* SMMU_IDR0.TERM_MODEL == 1 */
-    }
-    if (CD_S(cd)) {
-        goto bad_cd; /* !STE_SECURE && SMMU_IDR0.STALL_MODEL == 1 */
     }
     if (CD_HA(cd) || CD_HD(cd)) {
         goto bad_cd; /* HTTU = 0 */
@@ -899,6 +888,9 @@ static void smmuv3_notify_config_change(SMMUState *bs, uint32_t sid)
     iommu_config.pasid_cfg.base_ptr = cfg->s1ctxptr;
     iommu_config.pasid_cfg.pasid_bits = 0;
     iommu_config.pasid_cfg.smmuv3.version = PASID_TABLE_SMMUV3_CFG_VERSION_1;
+    iommu_config.pasid_cfg.smmuv3.s1fmt = cfg->s1fmt;
+    iommu_config.pasid_cfg.smmuv3.s1dss = cfg->s1dss;
+    iommu_config.pasid_cfg.smmuv3.s1cdmax = cfg->s1cdmax;
 
     if (cfg->disabled || cfg->bypassed) {
         iommu_config.pasid_cfg.config = IOMMU_PASID_CONFIG_BYPASS;
