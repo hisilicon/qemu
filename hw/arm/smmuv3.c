@@ -854,6 +854,43 @@ static void smmuv3_inv_notifiers_iova(SMMUState *s, int asid,
     }
 }
 
+static void smmuv3_notify_cd_inv(SMMUState *bs, uint32_t sid, uint32_t ssid)
+{
+#ifdef __linux__
+    IOMMUMemoryRegion *mr = smmu_iommu_mr(bs, sid);
+    IOMMUConfig iommu_config;
+    SMMUDevice *sdev;
+
+    if (!mr) {
+        return;
+    }
+
+    sdev = container_of(mr, SMMUDevice, iommu);
+
+    /* flush QEMU config cache */
+    smmuv3_flush_config(sdev);
+
+    if (!ssid) {
+        return;
+    }
+
+    if (!pci_device_is_pasid_ops_set(sdev->bus, sdev->devfn)) {
+        return;
+    }
+
+    iommu_config.pasid_cfg.version = PASID_TABLE_CFG_VERSION_1;
+    iommu_config.pasid_cfg.format = IOMMU_PASID_FORMAT_SMMUV3;
+    iommu_config.pasid_cfg.smmuv3.version = PASID_TABLE_SMMUV3_CFG_VERSION_1;
+    iommu_config.pasid_cfg.config = IOMMU_PASID_CONFIG_CD_INV;
+    iommu_config.pasid_cfg.pasid = ssid;
+
+    if (pci_device_set_pasid_table(sdev->bus, sdev->devfn, &iommu_config)) {
+        error_report("Failed to pass PASID table to host for iommu mr %s (%m)",
+                     mr->parent_obj.name);
+    }
+#endif
+}
+
 static void smmuv3_notify_config_change(SMMUState *bs, uint32_t sid)
 {
 #ifdef __linux__
@@ -993,21 +1030,15 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_CFGI_CD_ALL:
         {
             uint32_t sid = CMD_SID(&cmd);
-            IOMMUMemoryRegion *mr = smmu_iommu_mr(bs, sid);
-            SMMUDevice *sdev;
+            uint32_t ssid = CMD_SSID(&cmd);
 
             if (CMD_SSEC(&cmd)) {
                 cmd_error = SMMU_CERROR_ILL;
                 break;
             }
 
-            if (!mr) {
-                break;
-            }
-
             trace_smmuv3_cmdq_cfgi_cd(sid);
-            sdev = container_of(mr, SMMUDevice, iommu);
-            smmuv3_flush_config(sdev);
+            smmuv3_notify_cd_inv(bs, sid, ssid);
             break;
         }
         case SMMU_CMD_TLBI_NH_ASID:
