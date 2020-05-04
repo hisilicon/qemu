@@ -879,11 +879,6 @@ static void smmuv3_notify_page_resp(SMMUState *bs, uint32_t sid,
     iommu_config.pasid_cfg.page_resp.version = IOMMU_PAGE_RESP_VERSION_1;
     iommu_config.pasid_cfg.page_resp.grpid = stag;
     iommu_config.pasid_cfg.page_resp.code = code;
-    /*
-     * ToDo: Check we need to set this for STALL mode or not. Kernel seems
-     * to be checking this irrespective of master supports PRI or not.
-     */
-    iommu_config.pasid_cfg.page_resp.flags = IOMMU_PAGE_RESP_PASID_VALID;
 
     if (pci_device_set_pasid_table(sdev->bus, sdev->devfn, &iommu_config)) {
         error_report("Failed to pass PASID table to host for iommu mr %s (%m)",
