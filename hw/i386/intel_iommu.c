@@ -75,6 +75,7 @@ static VTDPASIDAddressSpace *vtd_add_find_pasid_as(IntelIOMMUState *s,
                                                    VTDBus *vtd_bus,
                                                    int devfn,
                                                    uint32_t pasid);
+static VTDBus *vtd_find_add_bus(IntelIOMMUState *s, PCIBus *bus);
 
 static void vtd_panic_require_caching_mode(void)
 {
@@ -1644,13 +1645,19 @@ static bool vtd_as_pt_enabled(VTDAddressSpace *as)
 /* Return whether the device is using IOMMU translation. */
 static bool vtd_switch_address_space(VTDAddressSpace *as)
 {
+    IntelIOMMUState *s = as->iommu_state;
+    VTDBus *vtd_bus;
+    VTDIOMMUFDDevice *vtd_idev;
+    VTDContextEntry ce;
+    VTDPASIDEntry pe;
+    int ret = 0;
     bool use_iommu;
     /* Whether we need to take the BQL on our own */
     bool take_bql = !qemu_mutex_iothread_locked();
 
     assert(as);
 
-    use_iommu = as->iommu_state->dmar_enabled && !vtd_as_pt_enabled(as);
+    use_iommu = s->dmar_enabled && !vtd_as_pt_enabled(as);
 
     trace_vtd_switch_address_space(pci_bus_num(as->bus),
                                    VTD_PCI_SLOT(as->devfn),
@@ -1664,6 +1671,28 @@ static bool vtd_switch_address_space(VTDAddressSpace *as)
      */
     if (take_bql) {
         qemu_mutex_lock_iothread();
+    }
+
+    /* For passthrough device, we don't switch as */
+    vtd_bus = vtd_find_add_bus(s, as->bus);
+    vtd_idev = vtd_bus->idevs[as->devfn];
+    if (s->root_scalable && likely(s->dmar_enabled) && vtd_idev) {
+        ret = vtd_dev_to_context_entry(s, pci_bus_num(as->bus),
+                                   as->devfn, &ce);
+        if (!ret) {
+            ret = vtd_ce_get_rid2pasid_entry(s, &ce, &pe);
+            if (!ret && (VTD_PE_GET_TYPE(&pe) == VTD_SM_PASID_ENTRY_FLT)) {
+                use_iommu = false;
+            }
+        }
+        if (ret) {
+            error_report_once("%s: cannot find ctx or pe for "
+                              "(dev=%02x:%02x:%02x)",
+                              __func__, pci_bus_num(as->bus),
+                              VTD_PCI_SLOT(as->devfn),
+                              VTD_PCI_FUNC(as->devfn));
+            return false;
+        }
     }
 
     /* Turn off first then on the other */
