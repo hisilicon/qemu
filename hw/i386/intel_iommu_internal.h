@@ -459,6 +459,8 @@ typedef union VTDInvDesc VTDInvDesc;
 
 /* Information about page-selective IOTLB invalidate */
 struct VTDIOTLBPageInvInfo {
+    bool is_piotlb;
+    uint32_t pasid;
     uint16_t domain_id;
     uint64_t addr;
     uint8_t mask;
