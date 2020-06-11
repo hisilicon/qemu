@@ -1972,6 +1972,125 @@ static inline uint64_t vtd_get_flpte_addr(uint64_t flpte, uint8_t aw)
     return flpte & VTD_FL_PT_BASE_ADDR_MASK(aw);
 }
 
+static int vtd_flt_page_walk_level(dma_addr_t addr,
+                                   uint64_t start, uint64_t end,
+                                   uint32_t level, vtd_page_walk_info *info)
+{
+    bool read, write;
+    uint32_t offset;
+    uint64_t flpte;
+    uint64_t iova = start;
+    uint64_t iova_next;
+    uint64_t subpage_size, subpage_mask;
+    int ret = 0;
+    IOMMUTLBEvent event;
+    IOMMUNotifier *n;
+    IOMMUMemoryRegion *iommu = (IOMMUMemoryRegion *)info->private;
+
+    IOMMU_NOTIFIER_FOREACH(n, iommu) {
+        if (n->iommu_idx == 0) {
+            break;
+        }
+    }
+
+    subpage_size = 1ULL << vtd_flpt_level_shift(level);
+    subpage_mask = vtd_flpt_level_page_mask(level);
+
+    while (iova < end) {
+        iova_next = (iova & subpage_mask) + subpage_size;
+
+        offset = vtd_iova_fl_level_offset(iova, level);
+        flpte = vtd_get_flpte(addr, offset);
+
+        if (flpte == (uint64_t)-1) {
+            goto next;
+        }
+
+        if (vtd_flpte_present(flpte)) {
+            read = true;
+            write = flpte & VTD_FL_RW_MASK;
+        } else {
+            read = false;
+            write = false;
+        }
+
+        if (!vtd_is_last_flpte(flpte, level) && vtd_flpte_present(flpte)) {
+            addr = vtd_get_flpte_addr(flpte, info->aw);
+            level--;
+            ret = vtd_flt_page_walk_level(addr, iova, MIN(iova_next, end),
+                                          level, info);
+        } else {
+            event.entry.target_as = &address_space_memory;
+            event.entry.iova = ((iova & subpage_mask) < n->start) ?
+                               n->start : iova & subpage_mask;
+            event.entry.perm = IOMMU_ACCESS_FLAG(read, write);
+            event.entry.addr_mask =
+                    ((event.entry.iova + event.entry.addr_mask) > n->end) ?
+                    (n->end - event.entry.iova) : ~subpage_mask;
+            event.entry.translated_addr = vtd_get_flpte_addr(flpte, info->aw);
+            event.type = event.entry.perm ? IOMMU_NOTIFIER_MAP :
+                                            IOMMU_NOTIFIER_UNMAP |
+                                            IOMMU_NOTIFIER_DEVIOTLB_UNMAP;
+            ret = vtd_page_walk_one(&event, info);
+        }
+
+        if (ret < 0) {
+            return ret;
+        }
+
+next:
+        iova = iova_next;
+    }
+
+    return 0;
+}
+
+static int vtd_flt_page_walk(IntelIOMMUState *s, VTDContextEntry *ce,
+                             uint64_t start, uint64_t end,
+                             vtd_page_walk_info *info, uint32_t pasid)
+{
+    VTDPASIDEntry pe;
+    dma_addr_t addr;
+    uint32_t level;
+    int ret;
+
+    ret = vtd_ce_get_rid2pasid_entry(s, ce, &pe, pasid);
+    if (ret) {
+        return ret;
+    }
+
+    addr = vtd_pe_get_flpt_base(&pe);
+    level = vtd_pe_get_flpt_level(&pe);
+
+    if (!vtd_iova_range_check(s, start, ce, info->aw, pasid)) {
+        return -VTD_FR_ADDR_BEYOND_MGAW;
+    }
+
+    if (!vtd_iova_range_check(s, end, ce, info->aw, pasid)) {
+        /* Fix end so that it reaches the maximum */
+        end = vtd_iova_limit(s, ce, info->aw, pasid);
+    }
+
+    return vtd_flt_page_walk_level(addr, start, end, level, info);
+}
+
+static int vtd_sync_flt_range(VTDAddressSpace *vtd_as,
+                              VTDContextEntry *ce,
+                              hwaddr addr, hwaddr size)
+{
+    IntelIOMMUState *s = vtd_as->iommu_state;
+    vtd_page_walk_info info = {
+        .hook_fn = vtd_sync_shadow_page_hook,
+        .private = (void *)&vtd_as->iommu,
+        .notify_unmap = true,
+        .aw = s->aw_bits,
+        .as = vtd_as,
+        .domain_id = vtd_get_domain_id(s, ce, vtd_as->pasid),
+    };
+
+    return vtd_flt_page_walk(s, ce, addr, addr + size, &info, vtd_as->pasid);
+}
+
 /*
  * Given the @iova, get relevant @flptep. @flpte_level will be the last level
  * of the translation, can be used for deciding the size of large page.
@@ -4174,6 +4293,10 @@ static void vtd_piotlb_pasid_invalidate(IntelIOMMUState *s,
     struct iommu_hwpt_vtd_s1_invalidate cache_info = { 0 };
     VTDPIOTLBInvInfo piotlb_info;
     VTDIOTLBPageInvInfo info;
+    VTDAddressSpace *vtd_as;
+    VTDContextEntry ce;
+    VTDPASIDEntry pe;
+    int ret;
 
     cache_info.addr = 0;
     cache_info.npages = (uint64_t)-1;
@@ -4196,6 +4319,25 @@ static void vtd_piotlb_pasid_invalidate(IntelIOMMUState *s,
     g_hash_table_foreach_remove(s->p_iotlb, vtd_hash_remove_by_pasid,
                                 &info);
     vtd_iommu_unlock(s);
+
+    QLIST_FOREACH(vtd_as, &(s->vtd_as_with_notifiers), next) {
+        uint32_t rid2pasid = 0;
+        vtd_dev_get_rid2pasid(s, pci_bus_num(vtd_as->bus), vtd_as->devfn,
+                              &rid2pasid);
+        ret = vtd_dev_to_context_entry(s, pci_bus_num(vtd_as->bus),
+                                       vtd_as->devfn, &ce);
+        if (s->root_scalable && likely(s->dmar_enabled) &&
+            domain_id == vtd_get_domain_id(s, &ce, pasid) &&
+            !ret && pasid == rid2pasid) {
+            ret = vtd_ce_get_rid2pasid_entry(s, &ce, &pe, pasid);
+            if (!ret && VTD_PE_GET_TYPE(&pe) == VTD_SM_PASID_ENTRY_FLT) {
+                ret = vtd_sync_flt_range(vtd_as, &ce, 0, UINT64_MAX);
+            } else {
+                ret = vtd_sync_shadow_page_table_range(vtd_as, &ce,
+                                                       0, UINT64_MAX);
+            }
+        }
+    }
 }
 
 static void vtd_piotlb_page_invalidate(IntelIOMMUState *s, uint16_t domain_id,
@@ -4205,6 +4347,10 @@ static void vtd_piotlb_page_invalidate(IntelIOMMUState *s, uint16_t domain_id,
     struct iommu_hwpt_vtd_s1_invalidate cache_info = { 0 };
     VTDPIOTLBInvInfo piotlb_info;
     VTDIOTLBPageInvInfo info;
+    VTDAddressSpace *vtd_as;
+    VTDContextEntry ce;
+    hwaddr size = (1 << am) * VTD_PAGE_SIZE;
+    int ret;
 
     cache_info.addr = addr;
     cache_info.npages = 1 << am;
@@ -4231,6 +4377,31 @@ static void vtd_piotlb_page_invalidate(IntelIOMMUState *s, uint16_t domain_id,
     g_hash_table_foreach_remove(s->p_iotlb,
                                 vtd_hash_remove_by_page, &info);
     vtd_iommu_unlock(s);
+
+    QLIST_FOREACH(vtd_as, &(s->vtd_as_with_notifiers), next) {
+        ret = vtd_dev_to_context_entry(s, pci_bus_num(vtd_as->bus),
+                                       vtd_as->devfn, &ce);
+        if (!ret && domain_id == vtd_get_domain_id(s, &ce, vtd_as->pasid)) {
+            if (vtd_as_has_map_notifier(vtd_as)) {
+                error_report_once("%s: FLT does not do map, should not come"
+                                  " here.\n", __func__);
+            } else {
+                IOMMUTLBEvent event;
+                IOMMUTLBEntry entry = {
+                    .target_as = &address_space_memory,
+                    .iova = addr,
+                    .translated_addr = 0,
+                    .addr_mask = size - 1,
+                    .perm = IOMMU_NONE,
+                };
+
+                event.type = IOMMU_NOTIFIER_UNMAP |
+                             IOMMU_NOTIFIER_DEVIOTLB_UNMAP;
+                event.entry = entry;
+                memory_region_notify_iommu(&vtd_as->iommu, 0, event);
+            }
+        }
+    }
 }
 
 static bool vtd_process_piotlb_desc(IntelIOMMUState *s,
