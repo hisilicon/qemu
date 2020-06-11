@@ -4176,6 +4176,9 @@ static void vtd_piotlb_pasid_invalidate(IntelIOMMUState *s,
     struct iommu_hwpt_vtd_s1_invalidate cache_info = { 0 };
     VTDPIOTLBInvInfo piotlb_info;
     VTDIOTLBPageInvInfo info;
+    VTDAddressSpace *vtd_as;
+    VTDContextEntry ce;
+    int ret;
 
     cache_info.addr = 0;
     cache_info.npages = (uint64_t)-1;
@@ -4198,6 +4201,33 @@ static void vtd_piotlb_pasid_invalidate(IntelIOMMUState *s,
     g_hash_table_foreach_remove(s->p_iotlb, vtd_hash_remove_by_pasid,
                                 &info);
     vtd_iommu_unlock(s);
+
+    QLIST_FOREACH(vtd_as, &(s->vtd_as_with_notifiers), next) {
+        uint32_t rid2pasid = 0;
+        vtd_dev_get_rid2pasid(s, pci_bus_num(vtd_as->bus), vtd_as->devfn,
+                              &rid2pasid);
+        ret = vtd_dev_to_context_entry(s, pci_bus_num(vtd_as->bus),
+                                       vtd_as->devfn, &ce);
+        if (!ret && s->root_scalable && likely(s->dmar_enabled) &&
+            domain_id == vtd_get_domain_id(s, &ce, pasid) &&
+            pasid == rid2pasid && !vtd_as_has_map_notifier(vtd_as)) {
+            IOMMUNotifier *notifier;
+
+            IOMMU_NOTIFIER_FOREACH(notifier, &vtd_as->iommu) {
+                IOMMUTLBEvent event;
+
+                event.type = IOMMU_NOTIFIER_UNMAP |
+                             IOMMU_NOTIFIER_DEVIOTLB_UNMAP;
+                event.entry.target_as = &address_space_memory;
+                event.entry.iova = notifier->start;
+                event.entry.perm = IOMMU_NONE;
+                event.entry.addr_mask = notifier->end - notifier->start;
+                event.entry.translated_addr = 0;
+
+                memory_region_notify_iommu_one(notifier, &event);
+            }
+        }
+    }
 }
 
 static void vtd_piotlb_page_invalidate(IntelIOMMUState *s, uint16_t domain_id,
@@ -4207,6 +4237,10 @@ static void vtd_piotlb_page_invalidate(IntelIOMMUState *s, uint16_t domain_id,
     struct iommu_hwpt_vtd_s1_invalidate cache_info = { 0 };
     VTDPIOTLBInvInfo piotlb_info;
     VTDIOTLBPageInvInfo info;
+    VTDAddressSpace *vtd_as;
+    VTDContextEntry ce;
+    hwaddr size = (1 << am) * VTD_PAGE_SIZE;
+    int ret;
 
     cache_info.addr = addr;
     cache_info.npages = 1 << am;
@@ -4233,6 +4267,28 @@ static void vtd_piotlb_page_invalidate(IntelIOMMUState *s, uint16_t domain_id,
     g_hash_table_foreach_remove(s->p_iotlb,
                                 vtd_hash_remove_by_page, &info);
     vtd_iommu_unlock(s);
+
+    QLIST_FOREACH(vtd_as, &(s->vtd_as_with_notifiers), next) {
+        uint32_t rid2pasid = 0;
+        vtd_dev_get_rid2pasid(s, pci_bus_num(vtd_as->bus), vtd_as->devfn,
+                              &rid2pasid);
+        ret = vtd_dev_to_context_entry(s, pci_bus_num(vtd_as->bus),
+                                       vtd_as->devfn, &ce);
+        if (!ret && s->root_scalable && likely(s->dmar_enabled) &&
+            domain_id == vtd_get_domain_id(s, &ce, pasid) &&
+            pasid == rid2pasid && !vtd_as_has_map_notifier(vtd_as)) {
+            IOMMUTLBEvent event;
+
+            event.type = IOMMU_NOTIFIER_UNMAP | IOMMU_NOTIFIER_DEVIOTLB_UNMAP;
+            event.entry.target_as = &address_space_memory;
+            event.entry.iova = addr;
+            event.entry.perm = IOMMU_NONE;
+            event.entry.addr_mask = size - 1;
+            event.entry.translated_addr = 0;
+
+            memory_region_notify_iommu(&vtd_as->iommu, 0, event);
+        }
+    }
 }
 
 static bool vtd_process_piotlb_desc(IntelIOMMUState *s,
