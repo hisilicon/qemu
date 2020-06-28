@@ -271,6 +271,7 @@
 /* FSTS_REG */
 #define VTD_FSTS_FRI_MASK       0xff00UL
 #define VTD_FSTS_FRI(val)       ((((uint32_t)(val)) << 8) & VTD_FSTS_FRI_MASK)
+#define VTD_FSTS_PRO            (1UL << 7)
 #define VTD_FSTS_IQE            (1UL << 4)
 #define VTD_FSTS_PPF            (1UL << 1)
 #define VTD_FSTS_PFO            1UL

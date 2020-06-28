@@ -563,6 +563,88 @@ static void vtd_generate_completion_event(IntelIOMMUState *s)
     }
 }
 
+static void vtd_generate_prq_event(IntelIOMMUState *s, uint32_t pre_prs)
+{
+    if (vtd_get_long_raw(s, DMAR_PRS_REG) & VTD_PRS_PPR) {
+        trace_vtd_inv_desc_wait_irq("One pending, skip current");//YiLiu: TODO
+        return;
+    }
+    vtd_set_clear_mask_long(s, DMAR_PRS_REG, 0, VTD_PRS_PPR);
+    vtd_set_clear_mask_long(s, DMAR_PECTL_REG, 0, VTD_PECTL_IP);
+    if (vtd_get_long_raw(s, DMAR_PECTL_REG) & VTD_PECTL_IM) {
+        trace_vtd_inv_desc_wait_irq("IM in PECTL_REG is set, "
+                                    "new event not generated");
+        return;
+    } else {
+        trace_vtd_inv_desc_wait_irq("Generating PRQ event");
+        vtd_generate_interrupt(s, DMAR_PEADDR_REG, DMAR_PEDATA_REG);
+        vtd_set_clear_mask_long(s, DMAR_PECTL_REG, VTD_PECTL_IP, 0);
+    }
+}
+
+/*
+ * Handle PRQ Queue Errors
+ */
+static void vtd_handle_prq_queue_error(IntelIOMMUState *s)
+{
+    uint32_t fsts_reg = vtd_get_long_raw(s, DMAR_FSTS_REG);
+
+    vtd_set_clear_mask_long(s, DMAR_FSTS_REG, 0, VTD_FSTS_IQE);
+    vtd_generate_fault_event(s, fsts_reg);
+}
+
+/*
+ * Enqueue a page request to software and generate interrupt
+ */
+static void vtd_report_page_request(IntelIOMMUState *s,
+                                    VTDPageReqDsc *prq)
+{
+    uint32_t fsts_reg = vtd_get_long_raw(s, DMAR_FSTS_REG);
+    uint32_t prs_reg = vtd_get_long_raw(s, DMAR_PRS_REG);
+    dma_addr_t addr;
+
+    //trace_vtd_dmar_fault(source_id, fault, addr, is_write);
+
+    if (fsts_reg & VTD_FSTS_PRO) {
+        //trace_vtd_err("New page request is not enqueued due to "
+        //              "Page Request Overflow.");
+        return;
+    }
+
+    if (s->prq_entry_count < s->prq_nb_entries) {
+        prq->qw_0 = cpu_to_le64(prq->qw_0);
+        prq->qw_1 = cpu_to_le64(prq->qw_1);
+        prq->priv_data[0] = cpu_to_le64(prq->priv_data[0]);
+        prq->priv_data[1] = cpu_to_le64(prq->priv_data[1]);
+        addr = s->prq_tail + s->pqa;
+        if (dma_memory_write(&address_space_memory, addr, prq,
+                             sizeof(*prq), MEMTXATTRS_UNSPECIFIED)) {
+            vtd_handle_prq_queue_error(s);
+            return;
+        }
+        s->prq_tail = (s->prq_tail + sizeof(*prq)) % s->prq_qsize;
+        vtd_set_long(s, DMAR_PQT_REG, s->prq_tail);// TODO: check if need to set quad
+        s->prq_entry_count++;
+        if (s->prq_entry_count == s->prq_nb_entries) {
+            //trace_vtd_err("Page Request Queue is full, "
+            //              "set PFO field.");
+            //TODO: handle the overflow fault, also the PRO bit has been moved
+            // to PRQ status register
+            printf("%s, s->prq_entry_count: %d full!!!!!\n", __func__, s->prq_entry_count);
+            vtd_set_clear_mask_long(s, DMAR_FSTS_REG, 0, VTD_FSTS_PRO);
+        }
+    }
+
+    if (!(prs_reg & VTD_PRS_PPR)) {
+        // vtd_set_clear_mask_long(s, DMAR_PRS_REG, 0, VTD_PRS_PPR); set it after generating irq
+        /*
+         * This case actually cause the PPR to be Set.
+         * So generate prq event (interrupt).
+         */
+         vtd_generate_prq_event(s, prs_reg);
+    }
+}
+
 static inline bool vtd_root_entry_present(IntelIOMMUState *s,
                                           VTDRootEntry *re,
                                           uint8_t devfn)
@@ -1923,9 +2005,120 @@ static void vtd_context_global_invalidate(IntelIOMMUState *s)
     vtd_pasid_cache_sync(s, &pc_info);
 }
 
+static int vtd_gpasid_find_by_host(IntelIOMMUState *s, uint32_t *pasid);
+
+static int vtd_report_iommu_fault(VTDPASIDAddressSpace *vtd_pasid_as,
+                                  int count, struct iommu_fault *buf)
+{
+    PCIBus *bus = vtd_pasid_as->vtd_bus->bus;
+    IntelIOMMUState *s = vtd_pasid_as->iommu_state;
+    struct iommu_fault *fault = buf;
+    VTDContextEntry ce;
+    VTDPageReqDsc prq;
+    uint8_t bus_num = pci_bus_num(bus);
+    uint32_t pasid;
+    int devfn = vtd_pasid_as->devfn;
+    int ret = 0;
+
+    if (vtd_dev_to_context_entry(s, bus_num, devfn, &ce)) {
+        return -ENOENT;
+    }
+
+    switch (fault->type) {
+    case IOMMU_FAULT_DMA_UNRECOV:
+        ret = 0;
+        break;
+    case IOMMU_FAULT_PAGE_REQ:
+        /* Only support page request with PASID */
+        if (!(IOMMU_FAULT_PAGE_REQUEST_PASID_VALID & fault->prm.flags)) {
+           ret = -ENOTTY;
+           break;
+        }
+        prq.type = 0x1; /* VT-d spec 3.0 defines it as 0x1*/
+        prq.pasid_present = 1;
+        prq.priv_data_present =(IOMMU_FAULT_PAGE_REQUEST_PRIV_DATA
+                                               & fault->prm.flags) ? 1 : 0;
+        prq.rsvd = 0x0;
+        prq.rid = vtd_make_source_id(bus_num, devfn);
+        printf("%s h/v (%u, %u), rid: %u\n", __func__, fault->prm.pasid, prq.pasid, prq.rid);
+        pasid = fault->prm.pasid;
+        ret = vtd_gpasid_find_by_host(s, &pasid);
+        if (ret < 0) {
+            printf("%s failed to find gpasid for hpasid: %d\n", __func__, fault->prm.pasid);
+            break;
+        }
+        prq.pasid = pasid;
+        prq.exe_req = (fault->prm.perm & IOMMU_FAULT_PERM_EXEC) ? 1 : 0;
+        prq.pm_req = (fault->prm.perm & IOMMU_FAULT_PERM_PRIV) ? 1 : 0;
+        prq.rsvd2 = 0x0;
+        prq.rd_req = (fault->prm.perm & IOMMU_FAULT_PERM_READ) ? 1 : 0;
+        prq.wr_req = (fault->prm.perm & IOMMU_FAULT_PERM_WRITE) ? 1 : 0;
+        prq.lpig = (IOMMU_FAULT_PAGE_REQUEST_LAST_PAGE
+                                                & fault->prm.flags) ? 1 : 0;
+        prq.prg_index = fault->prm.grpid;
+        prq.addr = fault->prm.addr >> VTD_PAGE_SHIFT; /* prm.addr is a not pfn per intel-iommu driver */
+        prq.priv_data[0] = (IOMMU_FAULT_PAGE_REQUEST_PRIV_DATA
+                    & fault->prm.flags) ? fault->prm.private_data[0] : 0x0;
+        prq.priv_data[1] = (IOMMU_FAULT_PAGE_REQUEST_PRIV_DATA
+                    & fault->prm.flags) ? fault->prm.private_data[1] : 0x0;
+        vtd_report_page_request(s, &prq);
+        ret = 0;
+        break;
+    default:
+        printf("%s, Unknown VT-d DMA Fault Type!!!", __func__);
+        ret = -ENOENT;
+    }
+
+    return ret;
+}
+
 static void vtd_dma_fault_notifier_handler(void *opaque)
 {
-    info_report("vtd: Unable to handle PRQ so far");
+    VTDHwpt *hwpt = opaque;
+    VTDPASIDAddressSpace *vtd_pasid_as =
+                          container_of(hwpt, VTDPASIDAddressSpace, hwpt);
+    struct iommufd_stage1_dma_fault header;
+    struct iommu_fault *queue = NULL;
+    char *queue_buffer = NULL;
+    ssize_t bytes;
+
+    if (!event_notifier_test_and_clear(&hwpt->notifier)) {
+        return;
+    }
+
+    bytes = pread(hwpt->fault_fd, &header, sizeof(header), 0);
+    if (bytes != sizeof(header)) {
+        error_report("%s unable to read the fault region header (0x%lx)",
+                     __func__, bytes);
+        return;
+    }
+
+    if (!queue) {
+        size_t queue_size = header.nb_entries * header.entry_size;
+
+        queue_buffer = g_malloc(queue_size);
+        bytes =  pread(hwpt->fault_fd, queue_buffer, queue_size, header.offset);
+        if (bytes != queue_size) {
+            error_report("%s unable to read the fault queue (0x%lx)",
+                         __func__, bytes);
+            return;
+        }
+
+        queue = (struct iommu_fault *)queue_buffer;
+    }
+
+    while (hwpt->fault_tail_index != header.head) {
+        vtd_report_iommu_fault(vtd_pasid_as, 1,
+                               &queue[hwpt->fault_tail_index]);
+        hwpt->fault_tail_index =
+            (hwpt->fault_tail_index + 1) % header.nb_entries;
+    }
+    bytes = pwrite(hwpt->fault_fd, &hwpt->fault_tail_index, 4, 0);
+    if (bytes != 4) {
+        error_report("%s unable to write the fault region tail index (0x%lx)",
+                     __func__, bytes);
+    }
+    g_free(queue_buffer);
 }
 
 static void vtd_init_stage1_config_data(union iommu_stage1_config *config,
@@ -3721,6 +3914,30 @@ static int vtd_hpasid_find_by_guest(IntelIOMMUState *s, uint32_t *pasid)
 }
 
 /* Must be called with IOMMU lock held */
+static int vtd_gpasid_find_by_host(IntelIOMMUState *s, uint32_t *pasid)
+{
+    int j, k;
+
+    /* Identical g/h pasid */
+    if (!s->non_identical_pasid) {
+        return 0;
+    }
+
+    for (j = 0; j < 1024; j++) {
+        for (k = 0; k < 1024; k++) {
+            VTDPASIDStoreEntry *entry = &s->vtd_pasid[j][k];
+
+            if (entry->allocated && entry->hpasid == *pasid) {
+                *pasid = entry->gpasid;
+                return 0;
+            }
+        }
+    }
+
+    return -ENODEV;
+}
+
+/* Must be called with IOMMU lock held */
 static void vtd_pasid_free_idx(IntelIOMMUState *s, uint32_t idx)
 {
     VTDPASIDStoreEntry *entry;
@@ -3943,11 +4160,22 @@ static void vtd_handle_pectl_write(IntelIOMMUState *s)
 
 static void vtd_handle_pqh_write(IntelIOMMUState *s, uint64_t val)
 {
+    int head_nb, tail_nb;
+    head_nb = (int) (val >> s->prq_entry_size_order);
+    tail_nb = (int) (s->prq_tail >> s->prq_entry_size_order);
+    /* Update prq_entry_count as consumer may have de-queue some entries */
+    printf("%s, head_n: %d, tail_nb: %d, old prq_head_nb: %lu\n", __func__, head_nb, tail_nb, (s->prq_head >> s->prq_entry_size_order));
+    printf("%s, s->prq_entry_count: %d - 1\n", __func__, s->prq_entry_count);
+    qemu_mutex_lock(&s->prq_lock);
+    s->prq_entry_count = (tail_nb - head_nb) & (s->prq_nb_entries - 1);
+    printf("%s, s->prq_entry_count: %d - 2\n", __func__, s->prq_entry_count);
     s->prq_head = val;
+    qemu_mutex_unlock(&s->prq_lock);
 }
 
 static void vtd_handle_pqa_write(IntelIOMMUState *s, uint64_t val)
 {
+    qemu_mutex_lock(&s->prq_lock);
     s->pqa = val & VTD_PQA_ADDR_MASK(s->aw_bits);
     s->prq_head = 0;
     s->prq_tail = 0;
@@ -3957,6 +4185,7 @@ static void vtd_handle_pqa_write(IntelIOMMUState *s, uint64_t val)
              ((val & VTD_PQA_QS_MASK) + 12 - s->prq_entry_size_order);
     s->prq_qsize = 1ULL << ((val & VTD_PQA_QS_MASK) + 12);
     s->prq_entry_count = 0;
+    qemu_mutex_unlock(&s->prq_lock);
 }
 
 static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
@@ -5474,6 +5703,7 @@ static void vtd_realize(DeviceState *dev, Error **errp)
     QLIST_INIT(&s->vtd_as_with_notifiers);
     QLIST_INIT(&s->vtd_idev_list);
     qemu_mutex_init(&s->iommu_lock);
+    qemu_mutex_init(&s->prq_lock);
     s->cap_finalized = false;
     memset(s->vtd_as_by_bus_num, 0, sizeof(s->vtd_as_by_bus_num));
     memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
