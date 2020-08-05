@@ -52,6 +52,7 @@
 #include "sysemu/numa.h"
 #include "sysemu/reset.h"
 #include "hw/hyperv/vmbus-bridge.h"
+#include "hw/cxl/cxl.h"
 
 /* Supported chipsets: */
 #include "hw/southbridge/piix.h"
@@ -1488,8 +1489,14 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
         build_piix4_pci0_int(dsdt);
     } else {
         sb_scope = aml_scope("_SB");
+        /*
+         * XXX: CXL spec calls this "CXL0", but that would require lots of
+         * changes throughout and so even for CXL enabled, we call it "PCI0"
+         */
         dev = aml_device("PCI0");
-        init_pci_acpi(dev, pcmc->pci_root_uid, PCIE, !pm->pcihp_bridge_en);
+        init_pci_acpi(dev, pcmc->pci_root_uid,
+                      machine->cxl_devices_state->is_enabled ? CXL : PCIE,
+                      !pm->pcihp_bridge_en);
         aml_append(dev, aml_name_decl("_ADR", aml_int(0)));
         aml_append(sb_scope, dev);
         if (mcfg_valid) {
