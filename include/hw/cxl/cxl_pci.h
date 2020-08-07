@@ -102,7 +102,7 @@ struct cxl_dvsec_port_flexbus {
     uint16_t cap;
     uint16_t ctrl;
     uint16_t status;
-    uint32_t rcvd_mod_ts_data;
+    uint32_t rcvd_mod_ts_data_phase1;
 };
 _Static_assert(sizeof(struct cxl_dvsec_port_flexbus) == 0x14,
                "dvsec port flexbus size incorrect");
