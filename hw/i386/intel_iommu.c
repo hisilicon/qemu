@@ -2330,6 +2330,15 @@ static bool vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
     } else if (inv_desc->lo & VTD_INV_DESC_WAIT_IF) {
         /* Interrupt flag */
         vtd_generate_completion_event(s);
+    } else if (inv_desc->lo & VTD_INV_DESC_WAIT_FN) {
+        /* Fence flag */
+        printf("%s this is a fence wait desc: hi: %llx, lo: %llx\n",
+               __func__, (unsigned long long) inv_desc->hi, (unsigned long long) inv_desc->lo);
+	/*
+	 * TODO: per spec CH 7.10, such wait descriptor is to ensure
+	 * all requests submitted to invalidation queue is processed
+	 * before processing requests after this wait descriptor.
+	 */
     } else {
         error_report_once("%s: invalid wait desc: hi=%"PRIx64", lo=%"PRIx64
                           " (unknown type)", __func__, inv_desc->hi,
