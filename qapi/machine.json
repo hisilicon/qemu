@@ -1223,7 +1223,7 @@
 # Since: 2.1
 ##
 { 'enum': 'MemoryDeviceInfoKind',
-  'data': [ 'dimm', 'nvdimm', 'virtio-pmem', 'virtio-mem', 'sgx-epc' ] }
+  'data': [ 'dimm', 'nvdimm', 'cxl', 'virtio-pmem', 'virtio-mem', 'sgx-epc' ] }
 
 ##
 # @PCDIMMDeviceInfoWrapper:
@@ -1272,6 +1272,7 @@
   'discriminator': 'type',
   'data': { 'dimm': 'PCDIMMDeviceInfoWrapper',
             'nvdimm': 'PCDIMMDeviceInfoWrapper',
+            'cxl': 'PCDIMMDeviceInfoWrapper',
             'virtio-pmem': 'VirtioPMEMDeviceInfoWrapper',
             'virtio-mem': 'VirtioMEMDeviceInfoWrapper',
             'sgx-epc': 'SgxEPCDeviceInfoWrapper'

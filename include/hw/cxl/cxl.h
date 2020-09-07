@@ -17,6 +17,8 @@
 #define CXL_COMPONENT_REG_BAR_IDX 0
 #define CXL_DEVICE_REG_BAR_IDX 2
 
+#define TYPE_CXL_TYPE3_DEV "cxl-type3"
+
 #define CXL_HOST_BASE 0xD0000000
 #define CXL_WINDOW_MAX 10
 
