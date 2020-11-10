@@ -3093,6 +3093,7 @@ static const VMStateDescription vtd_vmstate = {
         VMSTATE_BOOL(qi_enabled, IntelIOMMUState),
         VMSTATE_BOOL(intr_enabled, IntelIOMMUState),
         VMSTATE_BOOL(intr_eime, IntelIOMMUState),
+        VMSTATE_BOOL(iq_dw, IntelIOMMUState),
         VMSTATE_END_OF_LIST()
     }
 };
