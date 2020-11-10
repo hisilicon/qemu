@@ -471,6 +471,7 @@ static inline int pci_dev_bus_num(const PCIDevice *dev)
 }
 
 int pci_bus_numa_node(PCIBus *bus);
+int pci_bus_uid(PCIBus *bus);
 void pci_for_each_device(PCIBus *bus, int bus_num,
                          pci_bus_dev_fn fn,
                          void *opaque);

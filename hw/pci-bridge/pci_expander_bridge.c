@@ -68,6 +68,7 @@ struct PXBDev {
     uint8_t bus_nr;
     uint16_t numa_node;
     bool bypass_iommu;
+    int32_t uid;
 };
 
 static PXBDev *convert_to_pxb(PCIDevice *dev)
@@ -99,12 +100,20 @@ static uint16_t pxb_bus_numa_node(PCIBus *bus)
     return pxb->numa_node;
 }
 
+static int32_t pxb_bus_uid(PCIBus *bus)
+{
+    PXBDev *pxb = convert_to_pxb(bus->parent_dev);
+
+    return pxb->uid;
+}
+
 static void pxb_bus_class_init(ObjectClass *class, void *data)
 {
     PCIBusClass *pbc = PCI_BUS_CLASS(class);
 
     pbc->bus_num = pxb_bus_num;
     pbc->numa_node = pxb_bus_numa_node;
+    pbc->uid = pxb_bus_uid;
 }
 
 static const TypeInfo pxb_bus_info = {
@@ -345,6 +354,7 @@ static Property pxb_dev_properties[] = {
     DEFINE_PROP_UINT8("bus_nr", PXBDev, bus_nr, 0),
     DEFINE_PROP_UINT16("numa_node", PXBDev, numa_node, NUMA_NODE_UNASSIGNED),
     DEFINE_PROP_BOOL("bypass_iommu", PXBDev, bypass_iommu, false),
+    DEFINE_PROP_INT32("uid", PXBDev, uid, -1),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -422,11 +432,20 @@ static const TypeInfo pxb_pcie_dev_info = {
 
 static void pxb_cxl_dev_realize(PCIDevice *dev, Error **errp)
 {
+    PXBDev *pxb = convert_to_pxb(dev);
+
     /* A CXL PXB's parent bus is still PCIe */
     if (!pci_bus_is_express(pci_get_bus(dev))) {
         error_setg(errp, "pxb-cxl devices cannot reside on a PCI bus");
         return;
     }
+
+    if (pxb->uid < 0) {
+        error_setg(errp, "pxb-cxl devices must have a valid uid (0-2147483647)");
+        return;
+    }
+
+    /* FIXME: Check that uid doesn't collide with UIDs of other host bridges */
 
     pxb_dev_realize_common(dev, CXL, errp);
 }
