@@ -358,17 +358,9 @@ static int decode_ste(SMMUv3State *s, SMMUTransCfg *cfg,
         goto bad_ste;
     }
 
-    if (STE_S1CDMAX(ste) != 0) {
-        qemu_log_mask(LOG_UNIMP,
-                      "SMMUv3 does not support multiple context descriptors yet\n");
-        goto bad_ste;
-    }
-
-    if (STE_S1STALLD(ste)) {
-        qemu_log_mask(LOG_UNIMP,
-                      "SMMUv3 S1 stalling fault model not allowed yet\n");
-        goto bad_ste;
-    }
+    cfg->s1cdmax = STE_S1CDMAX(ste);
+    cfg->s1fmt = STE_S1FMT(ste);
+    cfg->s1dss =  STE_S1DSS(ste);
     cfg->s1ctxptr = STE_CTXPTR(ste);
     return 0;
 
