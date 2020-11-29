@@ -350,17 +350,9 @@ static int decode_ste(SMMUv3State *s, SMMUTransCfg *cfg,
         goto bad_ste;
     }
 
-    if (STE_S1CDMAX(ste) != 0) {
-        qemu_log_mask(LOG_UNIMP,
-                      "SMMUv3 does not support multiple context descriptors yet\n");
-        goto bad_ste;
-    }
-
-    if (STE_S1STALLD(ste)) {
-        qemu_log_mask(LOG_UNIMP,
-                      "SMMUv3 S1 stalling fault model not allowed yet\n");
-        goto bad_ste;
-    }
+    cfg->s1cdmax = STE_S1CDMAX(ste);
+    cfg->s1fmt = STE_S1FMT(ste);
+    cfg->s1dss =  STE_S1DSS(ste);
     cfg->s1ctxptr = STE_CTXPTR(ste);
     return 0;
 
@@ -915,8 +907,10 @@ static void smmuv3_notify_config_change(SMMUState *bs, uint32_t sid)
     iommu_config.pasid_cfg.version = PASID_TABLE_CFG_VERSION_1;
     iommu_config.pasid_cfg.format = IOMMU_PASID_FORMAT_SMMUV3;
     iommu_config.pasid_cfg.base_ptr = cfg->s1ctxptr;
-    iommu_config.pasid_cfg.pasid_bits = 0;
+    iommu_config.pasid_cfg.pasid_bits = cfg->s1cdmax;
     iommu_config.pasid_cfg.vendor_data.smmuv3.version = PASID_TABLE_SMMUV3_CFG_VERSION_1;
+    iommu_config.pasid_cfg.vendor_data.smmuv3.s1fmt = cfg->s1fmt;
+    iommu_config.pasid_cfg.vendor_data.smmuv3.s1dss = cfg->s1dss;
 
     if (cfg->disabled || cfg->bypassed) {
         iommu_config.pasid_cfg.config = IOMMU_PASID_CONFIG_BYPASS;
