@@ -20,6 +20,7 @@ typedef struct IOMMUConfig {
     union {
 #ifdef __linux__
         struct iommu_pasid_table_config pasid_cfg;
+        struct iommu_inv_pasid_info inv_pasid_info;
 #endif
           };
 } IOMMUConfig;

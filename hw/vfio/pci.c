@@ -2930,6 +2930,27 @@ static void vfio_unregister_req_notifier(VFIOPCIDevice *vdev)
     vdev->req_enabled = false;
 }
 
+static int vfio_iommu_cache_inv_type_pasid(PCIBus *bus, int32_t devfn,
+                                      IOMMUConfig *config)
+{
+    PCIDevice *pdev = bus->devices[devfn];
+    VFIOPCIDevice *vdev = DO_UPCAST(VFIOPCIDevice, pdev, pdev);
+    VFIOContainer *container = vdev->vbasedev.group->container;
+    struct vfio_iommu_type1_cache_invalidate ustruct = {};
+    struct iommu_inv_pasid_info *pasid_info = &ustruct.info.granu.pasid_info;
+
+    ustruct.argsz = sizeof(ustruct);
+    ustruct.flags = 0;
+    ustruct.info.argsz = sizeof(struct iommu_cache_invalidate_info);
+    ustruct.info.version = IOMMU_CACHE_INVALIDATE_INFO_VERSION_1;
+    ustruct.info.cache = IOMMU_CACHE_INV_TYPE_PASID;
+    ustruct.info.granularity = IOMMU_INV_GRANU_PASID;
+
+    memcpy(pasid_info, &config->inv_pasid_info, sizeof(config->inv_pasid_info));
+
+    return ioctl(container->fd, VFIO_IOMMU_CACHE_INVALIDATE, &ustruct);
+}
+
 static int vfio_iommu_set_pasid_table(PCIBus *bus, int32_t devfn,
                                       IOMMUConfig *config)
 {
@@ -3006,6 +3027,7 @@ static int vfio_iommu_return_page_response(PCIBus *bus, int32_t devfn,
 
 static PCIPASIDOps vfio_pci_pasid_ops = {
     .set_pasid_table = vfio_iommu_set_pasid_table,
+    .cache_inv_type_pasid = vfio_iommu_cache_inv_type_pasid,
     .return_page_response = vfio_iommu_return_page_response,
 };
 
