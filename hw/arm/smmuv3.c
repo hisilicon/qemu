@@ -848,6 +848,39 @@ static void smmuv3_inv_notifiers_iova(SMMUState *s, int asid, dma_addr_t iova,
     }
 }
 
+static void smmuv3_notify_cd_inv(SMMUState *bs, uint32_t sid, uint32_t ssid)
+{
+#ifdef __linux__
+    IOMMUMemoryRegion *mr = smmu_iommu_mr(bs, sid);
+    IOMMUConfig config;
+    SMMUDevice *sdev;
+
+    if (!mr) {
+        return;
+    }
+
+    sdev = container_of(mr, SMMUDevice, iommu);
+
+    /* flush QEMU config cache */
+    smmuv3_flush_config(sdev);
+
+    if (!ssid) {
+        return;
+    }
+
+    if (!pci_device_is_pasid_ops_set(sdev->bus, sdev->devfn)) {
+        return;
+    }
+
+    config.inv_pasid_info.flags = IOMMU_INV_PASID_FLAGS_PASID;
+    config.inv_pasid_info.pasid = ssid;
+
+    if (pci_device_cache_inv_type_pasid(sdev->bus, sdev->devfn, &config)) {
+        error_report("Failed to Invalidate Cache per PASID 0x%x", ssid);
+    }
+#endif
+}
+
 static void smmuv3_s1_range_inval(SMMUState *s, Cmd *cmd)
 {
     uint8_t scale = 0, num = 0, ttl = 0;
@@ -1013,21 +1046,15 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_CFGI_CD_ALL:
         {
             uint32_t sid = CMD_SID(&cmd);
-            IOMMUMemoryRegion *mr = smmu_iommu_mr(bs, sid);
-            SMMUDevice *sdev;
+            uint32_t ssid = CMD_SSID(&cmd);
 
             if (CMD_SSEC(&cmd)) {
                 cmd_error = SMMU_CERROR_ILL;
                 break;
             }
 
-            if (!mr) {
-                break;
-            }
-
             trace_smmuv3_cmdq_cfgi_cd(sid);
-            sdev = container_of(mr, SMMUDevice, iommu);
-            smmuv3_flush_config(sdev);
+            smmuv3_notify_cd_inv(bs, sid, ssid);
             break;
         }
         case SMMU_CMD_TLBI_NH_ASID:
