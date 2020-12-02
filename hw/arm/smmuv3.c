@@ -848,6 +848,36 @@ static void smmuv3_inv_notifiers_iova(SMMUState *s, int asid, dma_addr_t iova,
     }
 }
 
+static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
+                                       uint32_t stag, uint32_t code)
+{
+#ifdef __linux__
+    IOMMUMemoryRegion *mr = smmu_iommu_mr(bs, sid);
+    IOMMUPageResponse page_resp = {0};
+    SMMUDevice *sdev;
+
+    if (!mr) {
+        return;
+    }
+
+    sdev = container_of(mr, SMMUDevice, iommu);
+
+    if (!pci_device_is_pasid_ops_set(sdev->bus, sdev->devfn)) {
+        return;
+    }
+
+    page_resp.resp.argsz = sizeof(struct iommu_page_response);
+    page_resp.resp.version = IOMMU_PAGE_RESP_VERSION_1;
+    page_resp.resp.grpid = stag;
+    page_resp.resp.code = code;
+
+    if (pci_device_return_page_response(sdev->bus, sdev->devfn, &page_resp)) {
+        error_report("Failed to return page response to host for grpid 0x%x",
+                      stag);
+    }
+#endif
+}
+
 static void smmuv3_notify_cd_inv(SMMUState *bs, uint32_t sid, uint32_t ssid)
 {
 #ifdef __linux__
@@ -1086,10 +1116,22 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_TLBI_S2_IPA:
         case SMMU_CMD_ATC_INV:
         case SMMU_CMD_PRI_RESP:
-        case SMMU_CMD_RESUME:
         case SMMU_CMD_STALL_TERM:
             trace_smmuv3_unhandled_cmd(type);
             break;
+        case SMMU_CMD_RESUME:
+        {
+            uint32_t sid = CMD_SID(&cmd);
+            uint16_t stag = CMD_RESUME_STAG(&cmd);
+            uint8_t action = CMD_RESUME_AC(&cmd);
+            uint32_t code = IOMMU_PAGE_RESP_INVALID;
+
+            if (action) {
+                code = IOMMU_PAGE_RESP_SUCCESS;
+            }
+            smmuv3_notify_stall_resume(bs, sid, stag, code);
+            break;
+        }
         default:
             cmd_error = SMMU_CERROR_ILL;
             qemu_log_mask(LOG_GUEST_ERROR,
@@ -1598,14 +1640,43 @@ smmuv3_inject_faults(IOMMUMemoryRegion *iommu_mr, int count,
     int i;
 
     for (i = 0; i < count; i++) {
-        SMMUEventInfo info = {};
+        SMMUEventInfo info = {0};
         struct iommu_fault_unrecoverable *record;
 
-        if (buf[i].type != IOMMU_FAULT_DMA_UNRECOV) {
+        if (buf[i].type != IOMMU_FAULT_DMA_UNRECOV &&
+                        buf[i].type != IOMMU_FAULT_PAGE_REQ) {
             continue;
         }
 
         info.sid = sid;
+
+        if (buf[i].type == IOMMU_FAULT_PAGE_REQ) {
+            struct iommu_fault_page_request *prm;
+
+            prm = &buf[i].prm;
+            info.type = SMMU_EVT_F_TRANSLATION;
+            info.u.f_translation.addr = prm->addr;
+            info.u.f_translation.stall = true;
+            info.u.f_translation.ssid = prm->pasid;
+            info.u.f_translation.stag = prm->grpid;
+
+            if (prm->flags | IOMMU_FAULT_PAGE_REQUEST_PASID_VALID) {
+                info.u.f_translation.ssv = true;
+            }
+            if (prm->perm & IOMMU_FAULT_PERM_READ) {
+                info.u.f_translation.rnw = true;
+            }
+            if (prm->perm & IOMMU_FAULT_PERM_PRIV) {
+                info.u.f_translation.pnu = true;
+            }
+            if (prm->perm & IOMMU_FAULT_PERM_EXEC) {
+                info.u.f_translation.ind = true;
+            }
+
+            smmuv3_record_event(s3, &info);
+            return 0;
+        }
+
         record = &buf[i].event;
 
         switch (record->reason) {
