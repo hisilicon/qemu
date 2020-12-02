@@ -37,6 +37,7 @@ REG32(IDR0,                0x0)
     FIELD(IDR0, S1P,         1 , 1)
     FIELD(IDR0, TTF,         2 , 2)
     FIELD(IDR0, COHACC,      4 , 1)
+    FIELD(IDR0, BTM,         5 , 1)
     FIELD(IDR0, ASID16,      12, 1)
     FIELD(IDR0, TTENDIAN,    21, 2)
     FIELD(IDR0, STALL_MODEL, 24, 2)
@@ -45,10 +46,12 @@ REG32(IDR0,                0x0)
 
 REG32(IDR1,                0x4)
     FIELD(IDR1, SIDSIZE,      0 , 6)
+    FIELD(IDR1, SSIDSIZE,     6 , 6)
     FIELD(IDR1, EVENTQS,      16, 5)
     FIELD(IDR1, CMDQS,        21, 5)
 
 #define SMMU_IDR1_SIDSIZE 16
+#define SMMU_IDR1_SSIDSIZE 16
 #define SMMU_CMDQS   19
 #define SMMU_EVENTQS 19
 
@@ -63,7 +66,7 @@ REG32(IDR5,                0x14)
      FIELD(IDR5, GRAN16K,     5, 1);
      FIELD(IDR5, GRAN64K,     6, 1);
 
-#define SMMU_IDR5_OAS 4
+#define SMMU_IDR5_OAS 5
 
 REG32(IIDR,                0x18)
 REG32(AIDR,                0x1c)
