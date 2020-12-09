@@ -604,7 +604,6 @@ static void vfio_iommu_unmap_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb)
     hwaddr start = iotlb->iova + giommu->iommu_offset;
     VFIOContainer *container = giommu->container;
     struct vfio_iommu_type1_cache_invalidate ustruct = {};
-    struct iommu_inv_addr_info *addr_info = &ustruct.info.granu.addr_info;
     size_t size = iotlb->addr_mask + 1;
     int ret;
 
@@ -614,20 +613,30 @@ static void vfio_iommu_unmap_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb)
     ustruct.flags = 0;
     ustruct.info.argsz = sizeof(struct iommu_cache_invalidate_info);
     ustruct.info.version = IOMMU_CACHE_INVALIDATE_INFO_VERSION_1;
-
     ustruct.info.cache = IOMMU_CACHE_INV_TYPE_IOTLB;
-    ustruct.info.granularity = IOMMU_INV_GRANU_ADDR;
-    addr_info->flags = IOMMU_INV_ADDR_FLAGS_ARCHID;
-    if (iotlb->leaf) {
-        addr_info->flags |= IOMMU_INV_ADDR_FLAGS_LEAF;
+
+    if (iotlb->flags == IOMMU_INV_GRANU_PASID) {
+        struct iommu_inv_pasid_info *pasid_info =
+                                    &ustruct.info.granu.pasid_info;
+
+        ustruct.info.granularity = IOMMU_INV_GRANU_PASID;
+        pasid_info->archid = iotlb->arch_id;
+        pasid_info->flags = IOMMU_INV_PASID_FLAGS_ARCHID;
+    } else {
+        struct iommu_inv_addr_info *addr_info = &ustruct.info.granu.addr_info;
+
+        ustruct.info.granularity = IOMMU_INV_GRANU_ADDR;
+        addr_info->flags = IOMMU_INV_ADDR_FLAGS_ARCHID;
+        if (iotlb->leaf) {
+            addr_info->flags |= IOMMU_INV_ADDR_FLAGS_LEAF;
+        }
+        addr_info->archid = iotlb->arch_id;
+        addr_info->addr = start;
+        addr_info->granule_size = size;
+        addr_info->nb_granules = 1;
     }
-    addr_info->archid = iotlb->arch_id;
-    addr_info->addr = start;
-    addr_info->granule_size = size;
-    addr_info->nb_granules = 1;
     trace_vfio_iommu_addr_inv_iotlb(iotlb->arch_id, start, size, 1,
                                     iotlb->leaf);
-
     ret = ioctl(container->fd, VFIO_IOMMU_CACHE_INVALIDATE, &ustruct);
     if (ret) {
         error_report("%p: failed to invalidate CACHE for 0x%"PRIx64

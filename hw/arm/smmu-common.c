@@ -463,7 +463,7 @@ IOMMUMemoryRegion *smmu_iommu_mr(SMMUState *s, uint32_t sid)
 }
 
 /* Unmap the whole notifier's range */
-static void smmu_unmap_notifier_range(IOMMUNotifier *n)
+static void smmu_unmap_notifier_range(IOMMUNotifier *n, int asid)
 {
     IOMMUTLBEntry entry;
 
@@ -472,27 +472,34 @@ static void smmu_unmap_notifier_range(IOMMUNotifier *n)
     entry.perm = IOMMU_NONE;
     entry.addr_mask = n->end - n->start;
 
+    if (asid >= 0) {
+            entry.flags = IOMMU_INV_GRANU_PASID;
+    } else {
+            entry.flags = IOMMU_INV_GRANU_ADDR;
+    }
+    entry.arch_id = asid;
+
     memory_region_notify_one(n, &entry);
 }
 
 /* Unmap all notifiers attached to @mr */
-inline void smmu_inv_notifiers_mr(IOMMUMemoryRegion *mr)
+inline void smmu_inv_notifiers_mr(IOMMUMemoryRegion *mr, int asid)
 {
     IOMMUNotifier *n;
 
     trace_smmu_inv_notifiers_mr(mr->parent_obj.name);
     IOMMU_NOTIFIER_FOREACH(n, mr) {
-        smmu_unmap_notifier_range(n);
+        smmu_unmap_notifier_range(n, asid);
     }
 }
 
 /* Unmap all notifiers of all mr's */
-void smmu_inv_notifiers_all(SMMUState *s)
+void smmu_inv_notifiers_all(SMMUState *s, int asid)
 {
     SMMUDevice *sdev;
 
     QLIST_FOREACH(sdev, &s->devices_with_notifiers, next) {
-        smmu_inv_notifiers_mr(&sdev->iommu);
+        smmu_inv_notifiers_mr(&sdev->iommu, asid);
     }
 }
 

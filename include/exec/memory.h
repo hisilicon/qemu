@@ -94,6 +94,7 @@ typedef enum {
  * @perm: permission flag of the mapping (NONE encodes no mapping or
  * invalidation notification)
  * @arch_id: architecture specific ID tagging the TLB
+ * @flags: when @perm is NONE, indicates the granularity of the invalidation
  * @leaf: when @perm is NONE, indicates whether only caches for the last
  * level of translation need to be invalidated.
  */
@@ -104,6 +105,7 @@ struct IOMMUTLBEntry {
     hwaddr           addr_mask;
     IOMMUAccessFlags perm;
     uint32_t         arch_id;
+    uint32_t         flags;
     bool             leaf;
 };
 

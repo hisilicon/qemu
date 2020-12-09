@@ -174,9 +174,9 @@ void smmu_iotlb_inv_iova(SMMUState *s, int asid, dma_addr_t iova,
                          uint8_t tg, uint64_t num_pages, uint8_t ttl);
 
 /* Unmap the range of all the notifiers registered to any IOMMU mr */
-void smmu_inv_notifiers_all(SMMUState *s);
+void smmu_inv_notifiers_all(SMMUState *s, int asid);
 
 /* Unmap the range of all the notifiers registered to @mr */
-void smmu_inv_notifiers_mr(IOMMUMemoryRegion *mr);
+void smmu_inv_notifiers_mr(IOMMUMemoryRegion *mr, int asid);
 
 #endif /* HW_ARM_SMMU_COMMON_H */

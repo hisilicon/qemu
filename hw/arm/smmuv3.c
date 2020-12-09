@@ -827,6 +827,7 @@ static void smmuv3_notify_iova(IOMMUMemoryRegion *mr,
     entry.addr_mask = num_pages * (1 << granule) - 1;
     entry.perm = IOMMU_NONE;
     entry.arch_id = asid;
+    entry.flags = IOMMU_INV_GRANU_ADDR;
     entry.leaf = leaf;
 
     memory_region_notify_one(n, &entry);
@@ -1094,14 +1095,14 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             uint16_t asid = CMD_ASID(&cmd);
 
             trace_smmuv3_cmdq_tlbi_nh_asid(asid);
-            smmu_inv_notifiers_all(&s->smmu_state);
+            smmu_inv_notifiers_all(&s->smmu_state, asid);
             smmu_iotlb_inv_asid(bs, asid);
             break;
         }
         case SMMU_CMD_TLBI_NH_ALL:
         case SMMU_CMD_TLBI_NSNH_ALL:
             trace_smmuv3_cmdq_tlbi_nh();
-            smmu_inv_notifiers_all(&s->smmu_state);
+            smmu_inv_notifiers_all(&s->smmu_state, -1);
             smmu_iotlb_inv_all(bs);
             break;
         case SMMU_CMD_TLBI_NH_VAA:
