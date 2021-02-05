@@ -377,7 +377,7 @@ define_mailbox_handler(CCLS_GET_LSA)
     struct {
         uint32_t offset;
         uint32_t length;
-    } __attribute__((packed, __aligned__(16))) *get_lsa;
+    } __attribute__((packed, __aligned__(8))) *get_lsa;
     CXLType3Dev *ct3d = container_of(cxl_dstate, CXLType3Dev, cxl_dstate);
     CXLType3Class *cvc = CXL_TYPE3_DEV_GET_CLASS(ct3d);
     uint32_t offset, length;
@@ -400,7 +400,7 @@ define_mailbox_handler(CCLS_SET_LSA)
     struct {
         uint32_t offset;
         uint32_t rsvd;
-    } __attribute__((packed, __aligned__(16))) *set_lsa = (void *)cmd->payload;
+    } __attribute__((packed, __aligned__(8))) *set_lsa = (void *)cmd->payload;
     CXLType3Dev *ct3d = container_of(cxl_dstate, CXLType3Dev, cxl_dstate);
     CXLType3Class *cvc = CXL_TYPE3_DEV_GET_CLASS(ct3d);
     uint16_t plen = *len;
