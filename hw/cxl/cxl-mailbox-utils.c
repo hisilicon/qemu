@@ -414,8 +414,8 @@ define_mailbox_handler(CCLS_SET_LSA)
         return CXL_MBOX_INVALID_INPUT;
     }
 
-    cvc->set_lsa(ct3d, set_lsa + sizeof(*set_lsa), plen - sizeof(*set_lsa),
-                 set_lsa->offset);
+    cvc->set_lsa(ct3d, (void *)set_lsa + sizeof(*set_lsa),
+                 plen - sizeof(*set_lsa), set_lsa->offset);
     return CXL_MBOX_SUCCESS;
 }
 
