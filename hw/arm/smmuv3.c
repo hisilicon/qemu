@@ -840,6 +840,35 @@ static void smmuv3_notify_iova(IOMMUMemoryRegion *mr,
     memory_region_notify_iommu_one(n, &event);
 }
 
+/**
+ * smmuv3_notify_asid - call the notifier @n for a given asid
+ *
+ * @mr: IOMMU mr region handle
+ * @n: notifier to be called
+ * @asid: address space ID or negative value if we don't care
+ */
+static void smmuv3_notify_asid(IOMMUMemoryRegion *mr,
+                               IOMMUNotifier *n, int asid)
+{
+    struct iommu_hwpt_invalidate_arm_smmuv3 data = {
+        .opcode = SMMU_CMD_TLBI_NH_ASID,
+        .asid = asid,
+    };
+    IOMMUTLBEvent event = {};
+
+    event.type = IOMMU_NOTIFIER_UNMAP;
+    event.entry.target_as = &address_space_memory;
+    event.entry.perm = IOMMU_NONE;
+    event.entry.iova = n->start;
+    event.entry.addr_mask = n->end - n->start;
+    event.entry.data_type = IOMMU_DEVICE_DATA_ARM_SMMUV3;
+    event.entry.data_len = sizeof(data);
+    event.entry.data = &data;
+
+    memory_region_notify_iommu_one(n, &event);
+}
+
+
 /* invalidate an asid/iova range tuple in all mr's */
 static void smmuv3_inv_notifiers_iova(SMMUState *s, int asid, dma_addr_t iova,
                                       uint8_t tg, uint64_t num_pages)
@@ -974,6 +1003,22 @@ smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
     return true;
 }
 
+static void smmuv3_s1_asid_inval(SMMUState *s, uint16_t asid)
+{
+    SMMUDevice *sdev;
+
+    trace_smmuv3_s1_asid_inval(asid);
+    QLIST_FOREACH(sdev, &s->devices_with_notifiers, next) {
+        IOMMUMemoryRegion *mr = &sdev->iommu;
+        IOMMUNotifier *n;
+
+        IOMMU_NOTIFIER_FOREACH(n, mr) {
+            smmuv3_notify_asid(mr, n, asid);
+        }
+    }
+    smmu_iotlb_inv_asid(s, asid);
+}
+
 static int smmuv3_cmdq_consume(SMMUv3State *s)
 {
     SMMUState *bs = ARM_SMMU(s);
@@ -1081,8 +1126,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             uint16_t asid = CMD_ASID(&cmd);
 
             trace_smmuv3_cmdq_tlbi_nh_asid(asid);
-            smmu_inv_notifiers_all(&s->smmu_state);
-            smmu_iotlb_inv_asid(bs, asid);
+            smmuv3_s1_asid_inval(bs, asid);
             break;
         }
         case SMMU_CMD_TLBI_NH_ALL:
