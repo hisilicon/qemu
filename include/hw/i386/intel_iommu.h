@@ -67,6 +67,7 @@ typedef struct VTDIOMMUFDDevice VTDIOMMUFDDevice;
 typedef struct VTDPASIDStoreEntry VTDPASIDStoreEntry;
 typedef struct VTDPASIDCacheEntry VTDPASIDCacheEntry;
 typedef struct VTDPASIDAddressSpace VTDPASIDAddressSpace;
+typedef struct VTDHwpt VTDHwpt;
 
 /* Context-Entry */
 struct VTDContextEntry {
@@ -104,14 +105,25 @@ struct pasid_key {
     uint16_t sid;
 };
 
+struct VTDHwpt {
+    uint32_t hwpt_id;
+    int iommufd;
+    int eventfd;
+    EventNotifier notifier;
+    int fault_fd;
+    uint32_t fault_tail_index;
+};
+
 struct VTDPASIDCacheEntry {
     struct VTDPASIDEntry pasid_entry;
+    bool cache_filled;
 };
 
 struct VTDPASIDAddressSpace {
     VTDBus *vtd_bus;
     uint8_t devfn;
     uint32_t pasid;
+    VTDHwpt hwpt;
     IntelIOMMUState *iommu_state;
     VTDContextCacheEntry context_cache_entry;
     QLIST_ENTRY(VTDPASIDAddressSpace) next;
