@@ -65,6 +65,8 @@
     }                                                                         \
 }
 
+#define QI_RESP_INVALID         0x1
+
 static void vtd_address_space_refresh_all(IntelIOMMUState *s);
 static void vtd_address_space_unmap(VTDAddressSpace *as, IOMMUNotifier *n);
 
@@ -82,6 +84,11 @@ static int vtd_dev_get_rid2pasid(IntelIOMMUState *s, uint8_t bus_num,
                                  uint8_t devfn, uint32_t *rid_pasid);
 static gboolean vtd_hash_remove_by_pasid(gpointer key, gpointer value,
                                          gpointer user_data);
+static int vtd_dev_send_page_response(IntelIOMMUState *s, PCIBus *bus,
+                                      int devfn,
+                                      struct iommu_page_response *pg_resp);
+static void vtd_assemble_pg_resp(struct iommu_page_response *pg_resp,
+                                 VTDPageReqDsc prq, int code);
 
 static void vtd_panic_require_caching_mode(void)
 {
@@ -1618,6 +1625,9 @@ static int vtd_sync_shadow_page_table(VTDAddressSpace *vtd_as)
     int ret;
     VTDContextEntry ce;
     IOMMUNotifier *n;
+    struct iommu_page_response pg_resp;
+    VTDPRQEntry *vtd_prq, *tmp;
+    IntelIOMMUState *s = vtd_as->iommu_state;
 
     if (!(vtd_as->iommu.iommu_notify_flags & IOMMU_NOTIFIER_IOTLB_EVENTS)) {
         return 0;
@@ -1645,7 +1655,34 @@ static int vtd_sync_shadow_page_table(VTDAddressSpace *vtd_as)
         return ret;
     }
 
-    return vtd_sync_shadow_page_table_range(vtd_as, &ce, 0, UINT64_MAX);
+    ret = vtd_sync_shadow_page_table_range(vtd_as, &ce, 0, UINT64_MAX);
+    if (ret)
+        return ret;
+
+    /* If PRE bit of ce is disabled, we should send INVALID response */
+    if (!(ce.val[0] & (1ULL << 4))) {
+        ret = 0;
+
+        printf("%s: ce PRE bit is 0, prepare to submit INVALID grp resp.\n", __func__);
+        qemu_mutex_lock(&s->prq_lock);
+        QLIST_FOREACH_SAFE(vtd_prq, &s->vtd_prq_list, next, tmp) {
+            vtd_assemble_pg_resp(&pg_resp, vtd_prq->prq, QI_RESP_INVALID);
+            if (vtd_dev_send_page_response(s, vtd_as->bus, vtd_as->devfn, &pg_resp)) {
+                error_report_once("%s: page response failed, resp_desc: "
+                          "pasid=%d, flag=%x, code=%d", __func__,
+                          pg_resp.pasid, pg_resp.flags, pg_resp.code);
+                ret = -EINVAL;
+                break;
+            } else {
+                QLIST_REMOVE(vtd_prq, next);
+                g_free(vtd_prq);
+                printf("%s: successfully submit INVALID grp resp.\n", __func__);
+            }
+        }
+        qemu_mutex_unlock(&s->prq_lock);
+    }
+
+    return ret;
 }
 
 static bool vtd_pe_pgtt_is_pt(VTDPASIDEntry *pe)
@@ -2441,6 +2478,18 @@ static void vtd_context_global_invalidate(IntelIOMMUState *s)
     vtd_pasid_cache_sync(s, &pc_info);
 }
 
+static void vtd_assemble_pg_resp(struct iommu_page_response *pg_resp,
+                                 VTDPageReqDsc prq, int code)
+{
+    pg_resp->argsz = sizeof(pg_resp);
+    pg_resp->version = IOMMU_PAGE_RESP_VERSION_1;
+    pg_resp->pasid = prq.pasid;
+    pg_resp->code = code;
+    pg_resp->flags = prq.pasid_present ? IOMMU_PAGE_RESP_PASID_VALID : 0;
+    pg_resp->grpid = prq.prg_index;
+    printf("%s, PASID %d pg_resp flags %x\n", __func__, pg_resp->pasid, pg_resp->flags);
+}
+
 static int vtd_gpasid_find_by_host(IntelIOMMUState *s, uint32_t *pasid);
 
 static int vtd_report_iommu_fault(VTDPASIDAddressSpace *vtd_pasid_as,
@@ -2497,6 +2546,23 @@ static int vtd_report_iommu_fault(VTDPASIDAddressSpace *vtd_pasid_as,
                     & fault->prm.flags) ? fault->prm.private_data[0] : 0x0;
         prq.priv_data[1] = (IOMMU_FAULT_PAGE_REQUEST_PRIV_DATA
                     & fault->prm.flags) ? fault->prm.private_data[1] : 0x0;
+        /* If PRE bit of ce is disabled, we should send INVALID response */
+        if (!(ce.val[0] & (1ULL << 4))) {
+            struct iommu_page_response pg_resp;
+
+            printf("%s: ce PRE bit is 0, submit INVALID grp resp.\n", __func__);
+            prq.pasid = fault->prm.pasid;
+            vtd_assemble_pg_resp(&pg_resp, prq, QI_RESP_INVALID);
+            qemu_mutex_lock(&s->prq_lock);
+            if (vtd_dev_send_page_response(s, bus, devfn, &pg_resp)) {
+                error_report_once("%s: page response failed, resp_desc: "
+                          "pasid=%d, flag=%x, code=%d", __func__,
+                          pg_resp.pasid, pg_resp.flags, pg_resp.code);
+                ret = -EINVAL;
+            }
+            qemu_mutex_unlock(&s->prq_lock);
+            return ret;
+        }
         vtd_report_page_request(s, &prq);
         qemu_mutex_lock(&s->prq_lock);
         if (prq.lpig) {
