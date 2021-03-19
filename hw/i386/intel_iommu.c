@@ -4070,7 +4070,6 @@ static void vtd_piotlb_pasid_invalidate(IntelIOMMUState *s,
     cache_info->cache = IOMMU_CACHE_INV_TYPE_IOTLB;
     cache_info->granularity = IOMMU_INV_GRANU_PASID;
     cache_info->granu.pasid_info.pasid = pasid;
-    cache_info->granu.pasid_info.flags = IOMMU_INV_PASID_FLAGS_PASID;
 
     piotlb_info.domain_id = domain_id;
     piotlb_info.pasid = pasid;
@@ -4126,7 +4125,6 @@ static void vtd_piotlb_page_invalidate(IntelIOMMUState *s, uint16_t domain_id,
     cache_info->version = IOMMU_CACHE_INVALIDATE_INFO_VERSION_1;
     cache_info->cache = IOMMU_CACHE_INV_TYPE_IOTLB;
     cache_info->granularity = IOMMU_INV_GRANU_ADDR;
-    cache_info->granu.addr_info.flags = IOMMU_INV_ADDR_FLAGS_PASID;
     cache_info->granu.addr_info.flags |= ih ? IOMMU_INV_ADDR_FLAGS_LEAF : 0;
     cache_info->granu.addr_info.pasid = pasid;
     cache_info->granu.addr_info.addr = addr;
