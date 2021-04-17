@@ -330,8 +330,10 @@ define_mailbox_handler(IDENTIFY_MEMORY_DEVICE)
 
     CXLType3Dev *ct3d = container_of(cxl_dstate, CXLType3Dev, cxl_dstate);
     CXLType3Class *cvc = CXL_TYPE3_DEV_GET_CLASS(ct3d);
+    uint64_t size = memory_region_size(cxl_dstate->pmem);
 
-    if (memory_region_size(cxl_dstate->pmem) < (256 << 20)) {
+
+    if (!QEMU_IS_ALIGNED(size, 256 << 20)) {
         return CXL_MBOX_INTERNAL_ERROR;
     }
 
@@ -340,8 +342,8 @@ define_mailbox_handler(IDENTIFY_MEMORY_DEVICE)
 
     /* PMEM only */
     snprintf(id->fw_revision, 0x10, "BWFW VERSION %02d", 0);
-    id->total_capacity = memory_region_size(cxl_dstate->pmem);
-    id->persistent_capacity = memory_region_size(cxl_dstate->pmem);
+    id->total_capacity = size / (256 << 20);
+    id->persistent_capacity = size / (256 << 20);
     id->lsa_size = cvc->get_lsa_size(ct3d);
 
     *len = sizeof(*id);
