@@ -61,6 +61,55 @@ static void cedt_build_chbs(GArray *table_data, PXBDev *cxl)
     build_append_int_noprefix(table_data, memory_region_size(mr), 8);
 }
 
+static void cedt_build_cfmws(GArray *table_data, PXBDev *cxl)
+{
+    int i;
+
+    for (i = 0; i < cxl->cxl.num_windows; i++) {
+        struct MemoryRegion *mr;
+
+        /* Type */
+        build_append_int_noprefix(table_data, 1, 1);
+
+        /* Reserved */
+        build_append_int_noprefix(table_data, 0xff, 1);
+
+        /* Record Length */
+        build_append_int_noprefix(table_data, 36 + 4 * 1, 2);
+
+        /* Reserved */
+        build_append_int_noprefix(table_data, 0xffffffff, 4);
+
+        /* Base HPA */
+        build_append_int_noprefix(table_data, *cxl->cxl.window_base[i], 8);
+
+        /* Window Size */
+        mr = host_memory_backend_get_memory(cxl->cxl.memory_window[i]);
+        build_append_int_noprefix(table_data, memory_region_size(mr), 8);
+
+        /* Host Bridge Interleave Ways */
+        build_append_int_noprefix(table_data, 0, 1);
+
+        /* Host Bridge Interleave Arithmetic */
+        build_append_int_noprefix(table_data, 0, 1);
+
+        /* Reserved */
+        build_append_int_noprefix(table_data, 0, 2);
+
+        /* Host Bridge Interleave Granularity */
+        build_append_int_noprefix(table_data, 1, 4);
+
+        /* Window Restrictions */
+        build_append_int_noprefix(table_data, 0, 2); /* invalid, no restrictions */
+
+        /* QTG ID */
+        build_append_int_noprefix(table_data, 0, 2);
+
+        /* Host Bridge List (list of UIDs) */
+        build_append_int_noprefix(table_data, cxl->uid, 4);
+    }
+}
+
 static int cxl_foreach_pxb_hb(Object *obj, void *opaque)
 {
     Aml *cedt = opaque;
@@ -69,6 +118,7 @@ static int cxl_foreach_pxb_hb(Object *obj, void *opaque)
         PXBDev *pxb = PXB_CXL_DEV(obj);
 
         cedt_build_chbs(cedt->buf, pxb);
+        cedt_build_cfmws(cedt->buf, pxb);
     }
 
     return 0;
