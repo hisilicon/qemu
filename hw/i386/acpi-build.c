@@ -1430,12 +1430,15 @@ static void init_pci_acpi(Aml *dev, int uid, int type, bool native_pcie_hp )
 
 static void build_acpi0017(Aml *table)
 {
-    Aml *dev;
-    Aml *scope;
+    Aml *dev, *scope, *method;
 
     scope =  aml_scope("_SB");
     dev = aml_device("CXLM");
     aml_append(dev, aml_name_decl("_HID", aml_string("ACPI0017")));
+
+    method = aml_method("_STA", 0, AML_NOTSERIALIZED);
+    aml_append(method, aml_return(aml_int(0x01)));
+    aml_append(dev, method);
 
     aml_append(scope, dev);
     aml_append(table, scope);
