@@ -215,16 +215,20 @@ static void pxb_cxl_realize(DeviceState *dev, Error **errp)
      * A CXL host bridge can exist without a fixed memory window, but it would
      * only operate in legacy PCIe mode.
      */
-    if (!cxl_dev->memory_window[uid]) {
+    if (!cxl_dev->memory_window[0]) {
         warn_report(
             "CXL expander bridge created without window. Consider using %s",
             "memdev[0]=<memory_backend>");
         return;
     }
 
-    mr = host_memory_backend_get_memory(cxl_dev->memory_window[uid]);
+    /*
+     * FIXME: Use the first window for this host bridge. A host bridge should
+     * enable all windows.
+     */
+    mr = host_memory_backend_get_memory(cxl_dev->memory_window[0]);
     sysbus_init_mmio(sbd, mr);
-    sysbus_mmio_map(sbd, 1 + uid, *cxl_dev->window_base[uid]);
+    sysbus_mmio_map(sbd, 1, *cxl_dev->window_base[0]);
 }
 
 static void pxb_cxl_host_class_init(ObjectClass *class, void *data)
