@@ -18,6 +18,7 @@
 #include "qemu/range.h"
 #include "qemu/typedefs.h"
 #include "hw/register.h"
+#include "qapi/error.h"
 
 enum reg_type {
     CXL2_DEVICE,
@@ -175,6 +176,7 @@ typedef struct cxl_component {
     };
 
     ComplianceObject compliance;
+    CDATObject cdat;
 } CXLComponentState;
 
 void cxl_component_register_block_init(Object *obj,
@@ -187,4 +189,6 @@ void cxl_component_create_dvsec(CXLComponentState *cxl_cstate, uint16_t length,
                                 uint16_t type, uint8_t rev, uint8_t *body);
 
 bool cxl_doe_compliance_rsp(DOECap *doe_cap);
+void cxl_doe_cdat_init(CXLComponentState *cxl_cstate, Error **errp);
+bool cxl_doe_cdat_rsp(DOECap *doe_cap);
 #endif

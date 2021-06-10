@@ -239,6 +239,7 @@ typedef struct cxl_type3_dev {
 
     /* DOE */
     DOECap doe_comp;
+    DOECap doe_cdat;
 } CXLType3Dev;
 
 #ifndef TYPE_CXL_TYPE3_DEV
