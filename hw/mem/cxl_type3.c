@@ -13,6 +13,134 @@
 #include "qemu/rcu.h"
 #include "sysemu/hostmem.h"
 #include "hw/cxl/cxl.h"
+#include "hw/pci/msi.h"
+#include "hw/pci/msix.h"
+
+#define DWORD_BYTE 4
+
+bool cxl_doe_compliance_rsp(DOECap *doe_cap)
+{
+    CompRsp *rsp = &CT3(doe_cap->pdev)->cxl_cstate.compliance.response;
+    struct compliance_req_header *req = pcie_doe_get_write_mbox_ptr(doe_cap);
+    uint32_t type, req_len = 0, rsp_len = 0;
+
+    type = req->req_code;
+
+    switch (type) {
+    case CXL_COMP_MODE_CAP:
+        req_len = sizeof(struct cxl_compliance_cap_req);
+        rsp_len = sizeof(struct cxl_compliance_cap_rsp);
+        rsp->cap_rsp.status = 0x0;
+        rsp->cap_rsp.available_cap_bitmask = 0;
+        rsp->cap_rsp.enabled_cap_bitmask = 0;
+        break;
+    case CXL_COMP_MODE_STATUS:
+        req_len = sizeof(struct cxl_compliance_status_req);
+        rsp_len = sizeof(struct cxl_compliance_status_rsp);
+        rsp->status_rsp.cap_bitfield = 0;
+        rsp->status_rsp.cache_size = 0;
+        rsp->status_rsp.cache_size_units = 0;
+        break;
+    case CXL_COMP_MODE_HALT:
+        req_len = sizeof(struct cxl_compliance_halt_req);
+        rsp_len = sizeof(struct cxl_compliance_halt_rsp);
+        break;
+    case CXL_COMP_MODE_MULT_WR_STREAM:
+        req_len = sizeof(struct cxl_compliance_multi_write_streaming_req);
+        rsp_len = sizeof(struct cxl_compliance_multi_write_streaming_rsp);
+        break;
+    case CXL_COMP_MODE_PRO_CON:
+        req_len = sizeof(struct cxl_compliance_producer_consumer_req);
+        rsp_len = sizeof(struct cxl_compliance_producer_consumer_rsp);
+        break;
+    case CXL_COMP_MODE_BOGUS:
+        req_len = sizeof(struct cxl_compliance_bogus_writes_req);
+        rsp_len = sizeof(struct cxl_compliance_bogus_writes_rsp);
+        break;
+    case CXL_COMP_MODE_INJ_POISON:
+        req_len = sizeof(struct cxl_compliance_inject_poison_req);
+        rsp_len = sizeof(struct cxl_compliance_inject_poison_rsp);
+        break;
+    case CXL_COMP_MODE_INJ_CRC:
+        req_len = sizeof(struct cxl_compliance_inject_crc_req);
+        rsp_len = sizeof(struct cxl_compliance_inject_crc_rsp);
+        break;
+    case CXL_COMP_MODE_INJ_FC:
+        req_len = sizeof(struct cxl_compliance_inject_flow_ctrl_req);
+        rsp_len = sizeof(struct cxl_compliance_inject_flow_ctrl_rsp);
+        break;
+    case CXL_COMP_MODE_TOGGLE_CACHE:
+        req_len = sizeof(struct cxl_compliance_toggle_cache_flush_req);
+        rsp_len = sizeof(struct cxl_compliance_toggle_cache_flush_rsp);
+        break;
+    case CXL_COMP_MODE_INJ_MAC:
+        req_len = sizeof(struct cxl_compliance_inject_mac_delay_req);
+        rsp_len = sizeof(struct cxl_compliance_inject_mac_delay_rsp);
+        break;
+    case CXL_COMP_MODE_INS_UNEXP_MAC:
+        req_len = sizeof(struct cxl_compliance_insert_unexp_mac_req);
+        rsp_len = sizeof(struct cxl_compliance_insert_unexp_mac_rsp);
+        break;
+    case CXL_COMP_MODE_INJ_VIRAL:
+        req_len = sizeof(struct cxl_compliance_inject_viral_req);
+        rsp_len = sizeof(struct cxl_compliance_inject_viral_rsp);
+        break;
+    case CXL_COMP_MODE_INJ_ALMP:
+        req_len = sizeof(struct cxl_compliance_inject_almp_req);
+        rsp_len = sizeof(struct cxl_compliance_inject_almp_rsp);
+        break;
+    case CXL_COMP_MODE_IGN_ALMP:
+        req_len = sizeof(struct cxl_compliance_ignore_almp_req);
+        rsp_len = sizeof(struct cxl_compliance_ignore_almp_rsp);
+        break;
+    case CXL_COMP_MODE_INJ_BIT_ERR:
+        req_len = sizeof(struct cxl_compliance_inject_bit_err_in_flit_req);
+        rsp_len = sizeof(struct cxl_compliance_inject_bit_err_in_flit_rsp);
+        break;
+    default:
+        break;
+    }
+
+    /* Discard if request length mismatched */
+    if (pcie_doe_get_obj_len(req) < DIV_ROUND_UP(req_len, DWORD_BYTE)) {
+        return false;
+    }
+
+    /* Common fields for each compliance type */
+    rsp->header.doe_header.vendor_id = CXL_VENDOR_ID;
+    rsp->header.doe_header.data_obj_type = CXL_DOE_COMPLIANCE;
+    rsp->header.doe_header.length = DIV_ROUND_UP(rsp_len, DWORD_BYTE);
+    rsp->header.rsp_code = type;
+    rsp->header.version = 0x1;
+    rsp->header.length = rsp_len;
+
+    memcpy(doe_cap->read_mbox, rsp, rsp_len);
+
+    doe_cap->read_mbox_len += rsp->header.doe_header.length;
+
+    return true;
+}
+
+static uint32_t ct3d_config_read(PCIDevice *pci_dev, uint32_t addr, int size)
+{
+    CXLType3Dev *ct3d = CT3(pci_dev);
+    uint32_t val;
+
+    if (pcie_doe_read_config(&ct3d->doe_comp, addr, size, &val)) {
+        return val;
+    }
+
+    return pci_default_read_config(pci_dev, addr, size);
+}
+
+static void ct3d_config_write(PCIDevice *pci_dev, uint32_t addr, uint32_t val,
+                              int size)
+{
+    CXLType3Dev *ct3d = CT3(pci_dev);
+
+    pcie_doe_write_config(&ct3d->doe_comp, addr, val, size);
+    pci_default_write_config(pci_dev, addr, val, size);
+}
 
 static void build_dvsecs(CXLType3Dev *ct3d)
 {
@@ -207,6 +335,11 @@ static MemoryRegion *cxl_md_get_memory_region(MemoryDeviceState *md,
     return ct3d->cxl_dstate.pmem;
 }
 
+static DOEProtocol doe_comp_prot[] = {
+    {CXL_VENDOR_ID, CXL_DOE_COMPLIANCE, cxl_doe_compliance_rsp},
+    {},
+};
+
 static void ct3_realize(PCIDevice *pci_dev, Error **errp)
 {
     CXLType3Dev *ct3d = CT3(pci_dev);
@@ -214,6 +347,8 @@ static void ct3_realize(PCIDevice *pci_dev, Error **errp)
     ComponentRegisters *regs = &cxl_cstate->crb;
     MemoryRegion *mr = &regs->component_registers;
     uint8_t *pci_conf = pci_dev->config;
+    unsigned short msix_num = 1;
+    int i;
 
     if (!ct3d->cxl_dstate.pmem) {
         cxl_setup_memory(ct3d, errp);
@@ -243,6 +378,15 @@ static void ct3_realize(PCIDevice *pci_dev, Error **errp)
                      PCI_BASE_ADDRESS_SPACE_MEMORY |
                          PCI_BASE_ADDRESS_MEM_TYPE_64,
                      &ct3d->cxl_dstate.device_registers);
+
+    /* MSI(-X) Initailization */
+    msix_init_exclusive_bar(pci_dev, msix_num, 4, NULL);
+    for (i = 0; i < msix_num; i++) {
+        msix_vector_use(pci_dev, i);
+    }
+
+    /* DOE Initailization */
+    pcie_doe_init(pci_dev, &ct3d->doe_comp, 0x160, doe_comp_prot, true, 0);
 }
 
 static uint64_t cxl_md_get_addr(const MemoryDeviceState *md)
@@ -361,6 +505,9 @@ static void ct3_class_init(ObjectClass *oc, void *data)
     DeviceClass *dc = DEVICE_CLASS(oc);
     PCIDeviceClass *pc = PCI_DEVICE_CLASS(oc);
     MemoryDeviceClass *mdc = MEMORY_DEVICE_CLASS(oc);
+
+    pc->config_write = ct3d_config_write;
+    pc->config_read = ct3d_config_read;
     CXLType3Class *cvc = CXL_TYPE3_DEV_CLASS(oc);
 
     pc->realize = ct3_realize;

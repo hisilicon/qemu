@@ -173,6 +173,8 @@ typedef struct cxl_component {
             struct PCIDevice *pdev;
         };
     };
+
+    ComplianceObject compliance;
 } CXLComponentState;
 
 void cxl_component_register_block_init(Object *obj,
@@ -184,4 +186,5 @@ void cxl_component_register_init_common(uint32_t *reg_state,
 void cxl_component_create_dvsec(CXLComponentState *cxl_cstate, uint16_t length,
                                 uint16_t type, uint8_t rev, uint8_t *body);
 
+bool cxl_doe_compliance_rsp(DOECap *doe_cap);
 #endif
