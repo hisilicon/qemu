@@ -359,15 +359,16 @@ define_mailbox_handler(CCLS_GET_PARTITION_INFO)
         uint64_t next_pmem;
     } __attribute__((packed)) *part_info = (void *)cmd->payload;
     _Static_assert(sizeof(*part_info) == 0x20, "Bad get partition info size");
+    uint64_t size = memory_region_size(cxl_dstate->pmem);
 
-    if (memory_region_size(cxl_dstate->pmem) < (256 << 20)) {
+    if (!QEMU_IS_ALIGNED(size, 256 << 20)) {
         return CXL_MBOX_INTERNAL_ERROR;
     }
 
     /* PMEM only */
     part_info->active_vmem = 0;
     part_info->next_vmem = 0;
-    part_info->active_pmem = memory_region_size(cxl_dstate->pmem);
+    part_info->active_pmem = size / (256 << 20);
     part_info->next_pmem = part_info->active_pmem;
 
     *len = sizeof(*part_info);
