@@ -100,7 +100,7 @@ static void cedt_build_cfmws(GArray *table_data, PXBDev *cxl)
         build_append_int_noprefix(table_data, 1, 4);
 
         /* Window Restrictions */
-        build_append_int_noprefix(table_data, 0, 2); /* invalid, no restrictions */
+        build_append_int_noprefix(table_data, 0x0f, 2); /* No restrictions */
 
         /* QTG ID */
         build_append_int_noprefix(table_data, 0, 2);
