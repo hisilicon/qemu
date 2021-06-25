@@ -44,6 +44,15 @@
 #include <sys/ioctl.h>
 #include "qemu/jhash.h"
 
+// Open special debug log by uncomment below line
+//#define _VTD_DEBUG 1
+
+#ifdef _VTD_DEBUG
+#define VTD_DEBUG(fmt, ...) do { fprintf(stderr, fmt, ## __VA_ARGS__); } while (0)
+#else
+#define VTD_DEBUG(fmt, ...) do { } while (0)
+#endif
+
 /* context entry operations */
 #define VTD_CE_GET_RID2PASID(ce) \
     ((ce)->val[1] & VTD_SM_CONTEXT_ENTRY_RID2PASID_MASK)
@@ -654,7 +663,7 @@ static void vtd_report_page_request(IntelIOMMUState *s,
             //              "set PFO field.");
             //TODO: handle the overflow fault, also the PRO bit has been moved
             // to PRQ status register
-            printf("%s, s->prq_entry_count: %d full!!!!!\n", __func__, s->prq_entry_count);
+            VTD_DEBUG("%s, s->prq_entry_count: %d full!!!!!\n", __func__, s->prq_entry_count);
             vtd_set_clear_mask_long(s, DMAR_FSTS_REG, 0, VTD_FSTS_PRO);
         }
     }
@@ -1663,7 +1672,7 @@ static int vtd_sync_shadow_page_table(VTDAddressSpace *vtd_as)
     if (!(ce.val[0] & (1ULL << 4))) {
         ret = 0;
 
-        printf("%s: ce PRE bit is 0, prepare to submit INVALID grp resp.\n", __func__);
+        VTD_DEBUG("%s: ce PRE bit is 0, prepare to submit INVALID grp resp.\n", __func__);
         qemu_mutex_lock(&s->prq_lock);
         QLIST_FOREACH_SAFE(vtd_prq, &s->vtd_prq_list, next, tmp) {
             vtd_assemble_pg_resp(&pg_resp, vtd_prq->prq, QI_RESP_INVALID);
@@ -1676,7 +1685,7 @@ static int vtd_sync_shadow_page_table(VTDAddressSpace *vtd_as)
             } else {
                 QLIST_REMOVE(vtd_prq, next);
                 g_free(vtd_prq);
-                printf("%s: successfully submit INVALID grp resp.\n", __func__);
+                VTD_DEBUG("%s: successfully submit INVALID grp resp.\n", __func__);
             }
         }
         qemu_mutex_unlock(&s->prq_lock);
@@ -2487,7 +2496,7 @@ static void vtd_assemble_pg_resp(struct iommu_page_response *pg_resp,
     pg_resp->code = code;
     pg_resp->flags = prq.pasid_present ? IOMMU_PAGE_RESP_PASID_VALID : 0;
     pg_resp->grpid = prq.prg_index;
-    printf("%s, PASID %d pg_resp flags %x\n", __func__, pg_resp->pasid, pg_resp->flags);
+    VTD_DEBUG("%s, PASID %d pg_resp flags %x\n", __func__, pg_resp->pasid, pg_resp->flags);
 }
 
 static int vtd_gpasid_find_by_host(IntelIOMMUState *s, uint32_t *pasid);
@@ -2529,7 +2538,7 @@ static int vtd_report_iommu_fault(VTDPASIDAddressSpace *vtd_pasid_as,
         pasid = fault->prm.pasid;
         ret = vtd_gpasid_find_by_host(s, &pasid);
         if (ret < 0) {
-            printf("%s failed to find gpasid for hpasid: %d\n", __func__, fault->prm.pasid);
+            VTD_DEBUG("%s failed to find gpasid for hpasid: %d\n", __func__, fault->prm.pasid);
             break;
         }
         prq.pasid = pasid;
@@ -2550,7 +2559,7 @@ static int vtd_report_iommu_fault(VTDPASIDAddressSpace *vtd_pasid_as,
         if (!(ce.val[0] & (1ULL << 4))) {
             struct iommu_page_response pg_resp;
 
-            printf("%s: ce PRE bit is 0, submit INVALID grp resp.\n", __func__);
+            VTD_DEBUG("%s: ce PRE bit is 0, submit INVALID grp resp.\n", __func__);
             prq.pasid = fault->prm.pasid;
             vtd_assemble_pg_resp(&pg_resp, prq, QI_RESP_INVALID);
             qemu_mutex_lock(&s->prq_lock);
@@ -2574,14 +2583,14 @@ static int vtd_report_iommu_fault(VTDPASIDAddressSpace *vtd_pasid_as,
             memcpy(&prqe->prq, &prq, sizeof(prq));
             /* track the received prqs */
             QLIST_INSERT_HEAD(&s->vtd_prq_list, prqe, next);
-            printf("%s,last page in group track in list, addr: 0x%lx, groupid: %u, pasid: %u\n",
+            VTD_DEBUG("%s,last page in group track in list, addr: 0x%lx, groupid: %u, pasid: %u\n",
                                           __func__, (unsigned long) prq.addr, prq.prg_index, prq.pasid);
         }
         qemu_mutex_unlock(&s->prq_lock);
         ret = 0;
         break;
     default:
-        printf("%s, Unknown VT-d DMA Fault Type!!!", __func__);
+        error_report_once("%s, Unknown VT-d DMA Fault Type!!!", __func__);
         ret = -ENOENT;
     }
 
@@ -2794,9 +2803,9 @@ static int vtd_bind_guest_pasid(VTDPASIDAddressSpace *vtd_pasid_as,
         if (vtd_pasid_as->pasid != rid_pasid) {
             pasid_ptr = &pasid;
         }
-        printf("%s, try to bind PASID %u - 1\n", __func__, pasid);
+        VTD_DEBUG("%s, try to bind PASID %u - 1\n", __func__, pasid);
         ret = iommu_device_attach_stage1(idev, pasid_ptr, hwpt->hwpt_id);
-        printf("%s, try to bind PASID %u - 2, ret: %d\n", __func__, pasid, ret);
+        VTD_DEBUG("%s, try to bind PASID %u - 2, ret: %d\n", __func__, pasid, ret);
         if (ret) {
             vtd_destroy_hwpt(hwpt);
         }
@@ -2814,9 +2823,9 @@ static int vtd_bind_guest_pasid(VTDPASIDAddressSpace *vtd_pasid_as,
             return 0;
         }
 
-        printf("%s, try to unbind PASID %u - 1\n", __func__, pasid);
+        VTD_DEBUG("%s, try to unbind PASID %u - 1\n", __func__, pasid);
         ret = iommu_device_detach_stage1(idev, hwpt->hwpt_id);
-        printf("%s, try to unbind PASID %u - 2, ret: %d\n", __func__, pasid, ret);
+        VTD_DEBUG("%s, try to unbind PASID %u - 2, ret: %d\n", __func__, pasid, ret);
         if (!ret) {
             vtd_destroy_hwpt(hwpt);
         }
@@ -3311,7 +3320,7 @@ static bool vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
         vtd_generate_completion_event(s);
     } else if (inv_desc->lo & VTD_INV_DESC_WAIT_FN) {
         /* Fence flag */
-        printf("%s this is a fence wait desc: hi: %llx, lo: %llx\n",
+        VTD_DEBUG("%s this is a fence wait desc: hi: %llx, lo: %llx\n",
                __func__, (unsigned long long) inv_desc->hi, (unsigned long long) inv_desc->lo);
 	/*
 	 * TODO: per spec CH 7.10, such wait descriptor is to ensure
@@ -4343,7 +4352,7 @@ static bool vtd_process_page_group_response(IntelIOMMUState *s,
     VTDPRQEntry *vtd_prq, *tmp;
     uint32_t pasid, hpasid;
 
-    printf("%s: page response: hi=0x%lx lo=0x%lx\n"
+    VTD_DEBUG("%s: page response: hi=0x%lx lo=0x%lx\n"
            , __func__, inv_desc->val[1], inv_desc->val[0]);
     /* Today only support page request with PASID, so the same with response */
     if (!inv_desc->resp.pasid_present) {
@@ -4370,7 +4379,7 @@ static bool vtd_process_page_group_response(IntelIOMMUState *s,
     pg_resp.grpid = inv_desc->resp.grpid;
     pg_resp.pasid = hpasid;
     pg_resp.flags = IOMMU_PAGE_RESP_PASID_VALID;
-    printf("%s, PASID %d pg_resp flags %x\n", __func__, pg_resp.pasid, pg_resp.flags);
+    VTD_DEBUG("%s, PASID %d pg_resp flags %x\n", __func__, pg_resp.pasid, pg_resp.flags);
 
     /*
      * YI: TODO: needs to do lpig and prg_index check in the prq
@@ -4396,7 +4405,7 @@ static bool vtd_process_page_group_response(IntelIOMMUState *s,
              * , should the prq be freed in this list in case of guest
              * does retry.
              */
-            printf("%s, try to response PASID %d grpid %u\n", __func__, pg_resp.pasid, pg_resp.grpid);
+            VTD_DEBUG("%s, try to response PASID %d grpid %u\n", __func__, pg_resp.pasid, pg_resp.grpid);
             if (!vtd_dev_send_page_response(s, vtd_prq->bus,
                                             vtd_prq->devfn, &pg_resp)) {
                 QLIST_REMOVE(vtd_prq, next);
@@ -4731,7 +4740,7 @@ static int vtd_request_pasid_alloc(IntelIOMMUState *s, uint32_t *pasid)
     }
 
     if (!s->non_identical_pasid) {
-        printf("Allocated identical PASID g/h: %u/%u\n", *pasid, *pasid);
+        VTD_DEBUG("Allocated identical PASID g/h: %u/%u\n", *pasid, *pasid);
         goto out;
     }
 
@@ -4739,7 +4748,7 @@ static int vtd_request_pasid_alloc(IntelIOMMUState *s, uint32_t *pasid)
     if (entry) {
         entry->hpasid = *pasid;
         *pasid = entry->gpasid;
-        printf("Alloc PASID g/h: %u/%u\n", entry->gpasid, entry->hpasid);
+        VTD_DEBUG("Alloc PASID g/h: %u/%u\n", entry->gpasid, entry->hpasid);
     } else {
         ret = -ENOSPC;
     }
@@ -4776,7 +4785,7 @@ static int vtd_request_pasid_free(IntelIOMMUState *s, uint32_t pasid)
     if (!s->non_identical_pasid) {
         ret = __vtd_free_host_pasid(s, pasid);
         if (!ret) {
-            printf("Freed identical PASID g/h: %u/%u\n", pasid, pasid);
+            VTD_DEBUG("Freed identical PASID g/h: %u/%u\n", pasid, pasid);
         }
         goto out;
     }
@@ -4788,7 +4797,7 @@ static int vtd_request_pasid_free(IntelIOMMUState *s, uint32_t pasid)
     }
     ret = __vtd_free_host_pasid(s, entry->hpasid);
     if (!ret) {
-        printf("Free PASID g/h: %u/%u\n", pasid, entry->hpasid);
+        VTD_DEBUG("Free PASID g/h: %u/%u\n", pasid, entry->hpasid);
         vtd_pasid_free_idx(s, pasid);
     }
 out:
@@ -4871,7 +4880,7 @@ static void vtd_handle_prs_write(IntelIOMMUState *s)
 
     if ((pectl_reg & VTD_PECTL_IP) && !(prs_reg & VTD_PRS_PPR)) {
         vtd_set_clear_mask_long(s, DMAR_PECTL_REG, VTD_PECTL_IP, 0);
-        printf("pending completion interrupt condition serviced, "
+        VTD_DEBUG("pending completion interrupt condition serviced, "
                     "clear IP field of PECTL_REG\n");
     }
 }
@@ -4887,7 +4896,7 @@ static void vtd_handle_pectl_write(IntelIOMMUState *s)
     if ((pectl_reg & VTD_PECTL_IP) && !(pectl_reg & VTD_PECTL_IM)) {
         vtd_generate_interrupt(s, DMAR_PEADDR_REG, DMAR_PEDATA_REG);
         vtd_set_clear_mask_long(s, DMAR_PECTL_REG, VTD_PECTL_IP, 0);
-        printf("IM field is cleared, generate "
+        VTD_DEBUG("IM field is cleared, generate "
                     "page request event interrupt\n");
     }
 }
@@ -4898,11 +4907,11 @@ static void vtd_handle_pqh_write(IntelIOMMUState *s, uint64_t val)
     head_nb = (int) (val >> s->prq_entry_size_order);
     tail_nb = (int) (s->prq_tail >> s->prq_entry_size_order);
     /* Update prq_entry_count as consumer may have de-queue some entries */
-    printf("%s, head_n: %d, tail_nb: %d, old prq_head_nb: %lu\n", __func__, head_nb, tail_nb, (s->prq_head >> s->prq_entry_size_order));
-    printf("%s, s->prq_entry_count: %d - 1\n", __func__, s->prq_entry_count);
+    VTD_DEBUG("%s, head_n: %d, tail_nb: %d, old prq_head_nb: %lu\n", __func__, head_nb, tail_nb, (s->prq_head >> s->prq_entry_size_order));
+    VTD_DEBUG("%s, s->prq_entry_count: %d - 1\n", __func__, s->prq_entry_count);
     qemu_mutex_lock(&s->prq_lock);
     s->prq_entry_count = (tail_nb - head_nb) & (s->prq_nb_entries - 1);
-    printf("%s, s->prq_entry_count: %d - 2\n", __func__, s->prq_entry_count);
+    VTD_DEBUG("%s, s->prq_entry_count: %d - 2\n", __func__, s->prq_entry_count);
     s->prq_head = val;
     qemu_mutex_unlock(&s->prq_lock);
 }
@@ -5198,7 +5207,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Page Request Queue Head Register, 64-bit */
     case DMAR_PQH_REG:
-        printf("%s, DMAR_PQH_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PQH_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         if (size == 4) {
             vtd_set_long(s, addr, val);
@@ -5209,7 +5218,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_PQH_REG_HI:
-        printf("%s, DMAR_PQH_REG_HI write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PQH_REG_HI write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         assert(size == 4);
         vtd_set_long(s, addr, val);
@@ -5218,7 +5227,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Page Request Queue Tail Register, 64-bit */
     case DMAR_PQT_REG:
-        printf("%s, DMAR_PQT_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PQT_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         if (size == 4) {
             vtd_set_long(s, addr, val);
@@ -5229,7 +5238,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_PQT_REG_HI:
-        printf("%s, DMAR_PQT_REG_HI write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PQT_REG_HI write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         assert(size == 4);
         vtd_set_long(s, addr, val);
@@ -5238,7 +5247,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Page Request Queue Address Register, 64-bit */
     case DMAR_PQA_REG:
-        printf("%s, DMAR_PQA_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PQA_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         if (size == 4) {
             vtd_set_long(s, addr, val);
@@ -5249,7 +5258,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_PQA_REG_HI:
-        printf("%s, DMAR_PQA_REG_HI write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PQA_REG_HI write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         assert(size == 4);
         vtd_set_long(s, addr, val);
@@ -5257,7 +5266,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Page Request Status Register, 32-bit */
     case DMAR_PRS_REG:
-        printf("%s, DMAR_PRS_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PRS_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         assert(size == 4);
         vtd_set_long(s, addr, val);
@@ -5266,7 +5275,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Page Request Event Control Register, 32-bit */
     case DMAR_PECTL_REG:
-        printf("%s, DMAR_PECTL_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PECTL_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         assert(size == 4);
         vtd_set_long(s, addr, val);
@@ -5275,7 +5284,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Page Request Event Data Register, 32-bit */
     case DMAR_PEDATA_REG:
-        printf("%s, DMAR_PEDATA_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PEDATA_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         assert(size == 4);
         vtd_set_long(s, addr, val);
@@ -5283,7 +5292,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Page Request Event Address Register, 32-bit */
     case DMAR_PEADDR_REG:
-        printf("%s, DMAR_PEADDR_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PEADDR_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         assert(size == 4);
         vtd_set_long(s, addr, val);
@@ -5291,7 +5300,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Page Request Event Upper Address Register, 32-bit */
     case DMAR_PEUADDR_REG:
-        printf("%s, DMAR_PEUADDR_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
+        VTD_DEBUG("%s, DMAR_PEUADDR_REG write addr 0x%lx, size: %d, val: 0x%lx\n",
                 __func__, addr, size, val);
         assert(size == 4);
         vtd_set_long(s, addr, val);
