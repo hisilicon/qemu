@@ -127,6 +127,11 @@ config VTD
     bool
     select X86_IOMMU
 
+config VTD_DEBUG
+    bool
+    depends on VTD
+    default n
+
 config AMD_IOMMU
     bool
     select X86_IOMMU

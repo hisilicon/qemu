@@ -950,6 +950,10 @@ for opt do
   ;;
   --enable-vhost-net) vhost_net="yes"
   ;;
+  --disable-vtd-debug) vtd_debug="no"
+  ;;
+  --enable-vtd-debug) vtd_debug="yes"
+  ;;
   --disable-vhost-crypto) vhost_crypto="no"
   ;;
   --enable-vhost-crypto) vhost_crypto="yes"
@@ -2850,6 +2854,9 @@ if test "$xen" = "enabled" ; then
 fi
 if test "$vhost_scsi" = "yes" ; then
   echo "CONFIG_VHOST_SCSI=y" >> $config_host_mak
+fi
+if test "$vtd_debug" = "yes" ; then
+  echo "CONFIG_VTD_DEBUG=y" >> $config_host_mak
 fi
 if test "$vhost_net" = "yes" ; then
   echo "CONFIG_VHOST_NET=y" >> $config_host_mak

@@ -47,7 +47,7 @@
 // Open special debug log by uncomment below line
 //#define _VTD_DEBUG 1
 
-#ifdef _VTD_DEBUG
+#ifdef CONFIG_VTD_DEBUG
 #define VTD_DEBUG(fmt, ...) do { fprintf(stderr, fmt, ## __VA_ARGS__); } while (0)
 #else
 #define VTD_DEBUG(fmt, ...) do { } while (0)
