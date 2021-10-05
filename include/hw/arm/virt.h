@@ -99,6 +99,7 @@ enum {
 typedef enum VirtIOMMUType {
     VIRT_IOMMU_NONE,
     VIRT_IOMMU_SMMUV3,
+    VIRT_IOMMU_NESTED_SMMUV3,
     VIRT_IOMMU_VIRTIO,
 } VirtIOMMUType;
 
@@ -208,6 +209,12 @@ static inline int virt_gicv3_redist_region_count(VirtMachineState *vms)
 
     return (MACHINE(vms)->smp.cpus > redist0_capacity &&
             vms->highmem_redists) ? 2 : 1;
+}
+
+static inline bool virt_has_smmuv3(const VirtMachineState *vms)
+{
+    return vms->iommu == VIRT_IOMMU_SMMUV3 ||
+           vms->iommu == VIRT_IOMMU_NESTED_SMMUV3;
 }
 
 #endif /* QEMU_ARM_VIRT_H */
