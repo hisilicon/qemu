@@ -19,7 +19,8 @@
 
 #define TYPE_CXL_TYPE3_DEV "cxl-type3"
 
-#define CXL_HOST_BASE 0xD0000000
+//#define CXL_HOST_BASE 0xD0000000
+#define CXL_HOST_BASE 0x6000000000
 #define CXL_WINDOW_MAX 10
 
 typedef struct CXLState {
