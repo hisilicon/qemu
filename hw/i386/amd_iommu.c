@@ -24,6 +24,7 @@
 #include "hw/i386/pc.h"
 #include "hw/pci/msi.h"
 #include "hw/pci/pci_bus.h"
+#include "hw/qdev-properties.h"
 #include "migration/vmstate.h"
 #include "amd_iommu.h"
 #include "qapi/error.h"
@@ -905,6 +906,48 @@ static inline uint64_t amdvi_get_pte_entry(AMDVIState *s, uint64_t pte_addr,
     return pte;
 }
 
+static inline int amdvi_set_pte_entry(AMDVIState *s, uint64_t pte_addr,
+                                      uint16_t devid, uint64_t pte)
+{
+    if (dma_memory_write(&address_space_memory, pte_addr, &pte, sizeof(pte),
+                         MEMTXATTRS_UNSPECIFIED)) {
+        trace_amdvi_get_pte_hwerror(pte_addr);
+        amdvi_log_pagetab_error(s, devid, pte_addr, 0);
+        return -EINVAL;
+    }
+    return 0;
+}
+
+/*
+ * Checks if A/D bits need to be updated.
+ * It can only be called when PTE permissions have been
+ * validated against he transaction-requested ones.
+ */
+static bool amdvi_had_update(AMDVIAddressSpace *as, uint64_t dte,
+                             uint64_t *pte, unsigned perms)
+{
+    bool is_write = perms & AMDVI_PERM_WRITE;
+    bool dirty, access;
+
+    dirty = access = false;
+
+    if (is_write && (dte & AMDVI_DEV_HADEN) &&
+        !(*pte & AMDVI_DEV_PERM_DIRTY)) {
+        *pte |= AMDVI_DEV_PERM_DIRTY;
+        trace_amdvi_hd_update(*pte);
+        dirty = true;
+    }
+
+    if ((!is_write | dirty) && (dte & AMDVI_DEV_HAEN) &&
+        !(*pte & AMDVI_DEV_PERM_ACCESS)) {
+        *pte |= AMDVI_DEV_PERM_ACCESS;
+        trace_amdvi_ha_update(*pte);
+        access = true;
+    }
+
+    return dirty || access;
+}
+
 static void amdvi_page_walk(AMDVIAddressSpace *as, uint64_t *dte,
                             IOMMUTLBEntry *ret, unsigned perms,
                             hwaddr addr, uint64_t *iotlb_pte,
@@ -952,6 +995,11 @@ static void amdvi_page_walk(AMDVIAddressSpace *as, uint64_t *dte,
             page_mask = pte_get_page_mask(oldlevel);
         }
 
+        if (amdvi_had_update(as, dte[0], &pte, perms)) {
+            amdvi_set_pte_entry(as->iommu_state, pte_addr, as->devfn,
+                                cpu_to_le64(pte));
+        }
+
         /* get access permissions from pte */
         ret->iova = addr & page_mask;
         ret->translated_addr = (pte & AMDVI_DEV_PT_ROOT_MASK) & page_mask;
@@ -981,6 +1029,10 @@ static void amdvi_do_translate(AMDVIAddressSpace *as, hwaddr addr,
     if (iotlb_entry) {
         trace_amdvi_iotlb_hit(PCI_BUS_NUM(devid), PCI_SLOT(devid),
                 PCI_FUNC(devid), addr, iotlb_entry->translated_addr);
+        if (amdvi_had_update(as, iotlb_entry->dte_flags,
+                             &iotlb_entry->pte, iotlb_entry->perms))
+            amdvi_set_pte_entry(as->iommu_state, iotlb_entry->pte_addr,
+                                as->devfn, cpu_to_le64(iotlb_entry->pte));
         ret->iova = addr & ~iotlb_entry->page_mask;
         ret->translated_addr = iotlb_entry->translated_addr;
         ret->addr_mask = iotlb_entry->page_mask;

@@ -135,6 +135,10 @@
 #define AMDVI_DEV_PERM_SHIFT              61
 #define AMDVI_DEV_PERM_READ               (1ULL << 61)
 #define AMDVI_DEV_PERM_WRITE              (1ULL << 62)
+#define AMDVI_DEV_PERM_ACCESS             (1ULL << 5)
+#define AMDVI_DEV_PERM_DIRTY              (1ULL << 6)
+#define AMDVI_DEV_HADEN                   (3ULL << 7)
+#define AMDVI_DEV_HAEN                    (1ULL << 7)
 
 /* Device table entry bits 64:127 */
 #define AMDVI_DEV_DOMID_ID_MASK          ((1ULL << 16) - 1)
@@ -159,9 +163,11 @@
 #define AMDVI_FEATURE_GA                  (1ULL << 7) /* guest VAPIC support */
 #define AMDVI_FEATURE_HE                  (1ULL << 8) /* hardware error regs */
 #define AMDVI_FEATURE_PC                  (1ULL << 9) /* Perf counters       */
+#define AMDVI_FEATURE_HD                  (1ULL << 52) /* Host Dirty support */
+#define AMDVI_FEATURE_HA                  (1ULL << 49) /* Host Access        */
 
 /* reserved DTE bits */
-#define AMDVI_DTE_LOWER_QUAD_RESERVED  0x80300000000000fc
+#define AMDVI_DTE_LOWER_QUAD_RESERVED  0x803000000000006c
 #define AMDVI_DTE_MIDDLE_QUAD_RESERVED 0x0000000000000100
 #define AMDVI_DTE_UPPER_QUAD_RESERVED  0x08f0000000000000
 
@@ -176,7 +182,8 @@
 /* extended feature support */
 #define AMDVI_EXT_FEATURES (AMDVI_FEATURE_PREFETCH | AMDVI_FEATURE_PPR | \
         AMDVI_FEATURE_IA | AMDVI_FEATURE_GT | AMDVI_FEATURE_HE | \
-        AMDVI_GATS_MODE | AMDVI_HATS_MODE | AMDVI_FEATURE_GA)
+        AMDVI_GATS_MODE | AMDVI_HATS_MODE | AMDVI_FEATURE_GA | \
+        AMDVI_FEATURE_HD | AMDVI_FEATURE_HA)
 
 /* capabilities header */
 #define AMDVI_CAPAB_FEATURES (AMDVI_CAPAB_FLAT_EXT | \
