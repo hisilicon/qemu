@@ -1882,6 +1882,19 @@
   'data': ['second', 'millisecond'] }
 
 ##
+# @DirtyRateScope:
+#
+# An enumeration of scope of measuring dirtyrate.
+#
+# @dirty-devices: calculate dirtyrate by devices only.
+#
+# Since: 7.1
+#
+##
+{ 'enum': 'DirtyRateScope',
+  'data': ['all', 'cpu', 'dirty-devices'] }
+
+##
 # @DirtyRateInfo:
 #
 # Information about measured dirty page rate.
@@ -1906,6 +1919,9 @@
 # @vcpu-dirty-rate: dirty rate for each vCPU if dirty-ring mode was
 #     specified (Since 6.2)
 #
+# @scope: enables the dirty tracker in an agent e.g. CPU or
+#         devices (Since 7.1)
+#
 # Since: 5.2
 ##
 { 'struct': 'DirtyRateInfo',
@@ -1916,6 +1932,7 @@
            'calc-time-unit': 'TimeUnit',
            'sample-pages': 'uint64',
            'mode': 'DirtyRateMeasureMode',
+           'scope': 'DirtyRateScope',
            '*vcpu-dirty-rate': [ 'DirtyRateVcpu' ] } }
 
 ##
@@ -1987,6 +2004,7 @@
 { 'command': 'calc-dirty-rate', 'data': {'calc-time': 'int64',
                                          '*calc-time-unit': 'TimeUnit',
                                          '*sample-pages': 'int',
+                                         '*scope': 'DirtyRateScope',
                                          '*mode': 'DirtyRateMeasureMode'} }
 
 ##

@@ -48,6 +48,7 @@ struct DirtyRateConfig {
     uint64_t sample_pages_per_gigabytes; /* sample pages per GB */
     int64_t calc_time_ms; /* desired calculation time (in milliseconds) */
     DirtyRateMeasureMode mode; /* mode of dirtyrate measurement */
+    DirtyRateScope scope; /* scope of dirtyrate measurement */
 };
 
 /*

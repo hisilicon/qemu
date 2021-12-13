@@ -47,6 +47,8 @@ static int CalculatingState = DIRTY_RATE_STATUS_UNSTARTED;
 static struct DirtyRateStat DirtyStat;
 static DirtyRateMeasureMode dirtyrate_mode =
                 DIRTY_RATE_MEASURE_MODE_PAGE_SAMPLING;
+static DirtyRateScope dirtyrate_scope =
+                DIRTY_RATE_SCOPE_ALL;
 
 static int64_t dirty_stat_wait(int64_t msec, int64_t initial_time)
 {
@@ -262,6 +264,7 @@ query_dirty_rate_info(TimeUnit calc_time_unit)
     info->calc_time_unit = calc_time_unit;
     info->sample_pages = DirtyStat.sample_pages;
     info->mode = dirtyrate_mode;
+    info->scope = dirtyrate_scope;
 
     if (qatomic_read(&CalculatingState) == DIRTY_RATE_STATUS_MEASURED) {
         info->has_dirty_rate = true;
@@ -609,9 +612,14 @@ static void calculate_dirtyrate_dirty_bitmap(struct DirtyRateConfig config)
 {
     int64_t start_time;
     DirtyPageRecord dirty_pages;
+    unsigned int flags = GLOBAL_DIRTY_DIRTY_RATE;
+
+    if (config.scope == DIRTY_RATE_SCOPE_DIRTY_DEVICES) {
+        flags |= GLOBAL_DIRTY_DIRTY_RATE_DEVICES;
+    }
 
     qemu_mutex_lock_iothread();
-    memory_global_dirty_log_start(GLOBAL_DIRTY_DIRTY_RATE);
+    memory_global_dirty_log_start(flags);
 
     /*
      * 1'round of log sync may return all 1 bits with
@@ -641,7 +649,7 @@ static void calculate_dirtyrate_dirty_bitmap(struct DirtyRateConfig config)
      * 1. fetch dirty bitmap from kvm
      * 2. stop dirty tracking
      */
-    global_dirty_log_sync(GLOBAL_DIRTY_DIRTY_RATE, true);
+    global_dirty_log_sync(flags, true);
 
     record_dirtypages_bitmap(&dirty_pages, false);
 
@@ -748,6 +756,8 @@ void qmp_calc_dirty_rate(int64_t calc_time,
                          TimeUnit calc_time_unit,
                          bool has_sample_pages,
                          int64_t sample_pages,
+                         bool has_scope,
+                         DirtyRateScope scope,
                          bool has_mode,
                          DirtyRateMeasureMode mode,
                          Error **errp)
@@ -822,6 +832,7 @@ void qmp_calc_dirty_rate(int64_t calc_time,
     config.calc_time_ms = calc_time_ms;
     config.sample_pages_per_gigabytes = sample_pages;
     config.mode = mode;
+    config.scope = scope;
 
     cleanup_dirtyrate_stat(config);
 
@@ -830,6 +841,7 @@ void qmp_calc_dirty_rate(int64_t calc_time,
      * been used in last calculation
      **/
     dirtyrate_mode = mode;
+    dirtyrate_scope = scope;
 
     init_dirtyrate_stat(config);
 
@@ -862,6 +874,8 @@ void hmp_info_dirty_rate(Monitor *mon, const QDict *qdict)
                    info->calc_time);
     monitor_printf(mon, "Mode: %s\n",
                    DirtyRateMeasureMode_str(info->mode));
+    monitor_printf(mon, "Scope: %s\n",
+                   DirtyRateScope_str(info->scope));
     monitor_printf(mon, "Dirty rate: ");
     if (info->has_dirty_rate) {
         monitor_printf(mon, "%"PRIi64" (MB/s)\n", info->dirty_rate);
@@ -888,7 +902,9 @@ void hmp_calc_dirty_rate(Monitor *mon, const QDict *qdict)
     bool has_sample_pages = (sample_pages != -1);
     bool dirty_ring = qdict_get_try_bool(qdict, "dirty_ring", false);
     bool dirty_bitmap = qdict_get_try_bool(qdict, "dirty_bitmap", false);
+    bool dirty_devices = qdict_get_try_bool(qdict, "dirty_devices", false);
     DirtyRateMeasureMode mode = DIRTY_RATE_MEASURE_MODE_PAGE_SAMPLING;
+    DirtyRateScope scope = DIRTY_RATE_SCOPE_ALL;
     Error *err = NULL;
 
     if (!sec) {
@@ -907,10 +923,13 @@ void hmp_calc_dirty_rate(Monitor *mon, const QDict *qdict)
     } else if (dirty_ring) {
         mode = DIRTY_RATE_MEASURE_MODE_DIRTY_RING;
     }
+    if (dirty_devices) {
+        scope = DIRTY_RATE_SCOPE_DIRTY_DEVICES;
+    }
 
     qmp_calc_dirty_rate(sec, /* calc-time */
                         false, TIME_UNIT_SECOND, /* calc-time-unit */
-                        has_sample_pages, sample_pages,
+                        has_sample_pages, sample_pages, true, scope,
                         true, mode,
                         &err);
     if (err) {
