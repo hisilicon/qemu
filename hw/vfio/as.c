@@ -217,7 +217,8 @@ static bool vfio_devices_all_dirty_tracking(VFIOContainer *container)
     VFIODevice *vbasedev = NULL;
     MigrationState *ms = migrate_get_current();
 
-    if (!migration_is_setup_or_active(ms->state)) {
+    if (!migration_is_setup_or_active(ms->state) &&
+        !memory_global_dirty_devices()) {
         return false;
     }
 
@@ -228,8 +229,9 @@ static bool vfio_devices_all_dirty_tracking(VFIOContainer *container)
             return false;
         }
 
-        if (vbasedev->pre_copy_dirty_page_tracking == ON_OFF_AUTO_OFF &&
-            migration->device_state == VFIO_DEVICE_STATE_RUNNING) {
+        if (!memory_global_dirty_devices() &&
+            (vbasedev->pre_copy_dirty_page_tracking == ON_OFF_AUTO_OFF &&
+             migration->device_state == VFIO_DEVICE_STATE_RUNNING)) {
             return false;
         }
 

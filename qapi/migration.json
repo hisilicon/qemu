@@ -1782,6 +1782,19 @@
   'data': ['page-sampling', 'dirty-ring', 'dirty-bitmap'] }
 
 ##
+# @DirtyRateScope:
+#
+# An enumeration of scope of measuring dirtyrate.
+#
+# @dirty-devices: calculate dirtyrate by devices only.
+#
+# Since: 7.1
+#
+##
+{ 'enum': 'DirtyRateScope',
+  'data': ['all', 'cpu', 'dirty-devices'] }
+
+##
 # @DirtyRateInfo:
 #
 # Information about current dirty page rate of vm.
@@ -1805,6 +1818,9 @@
 # @vcpu-dirty-rate: dirtyrate for each vcpu if dirty-ring
 #                   mode specified (Since 6.2)
 #
+# @scope: enables the dirty tracker in an agent e.g. CPU or
+#         devices (Since 7.1)
+#
 # Since: 5.2
 ##
 { 'struct': 'DirtyRateInfo',
@@ -1814,6 +1830,7 @@
            'calc-time': 'int64',
            'sample-pages': 'uint64',
            'mode': 'DirtyRateMeasureMode',
+           'scope': 'DirtyRateScope',
            '*vcpu-dirty-rate': [ 'DirtyRateVcpu' ] } }
 
 ##
@@ -1839,6 +1856,7 @@
 ##
 { 'command': 'calc-dirty-rate', 'data': {'calc-time': 'int64',
                                          '*sample-pages': 'int',
+                                         '*scope': 'DirtyRateScope',
                                          '*mode': 'DirtyRateMeasureMode'} }
 
 ##

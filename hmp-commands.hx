@@ -1746,10 +1746,11 @@ ERST
 
     {
         .name       = "calc_dirty_rate",
-        .args_type  = "dirty_ring:-r,dirty_bitmap:-b,second:l,sample_pages_per_GB:l?",
-        .params     = "[-r] [-b] second [sample_pages_per_GB]",
+        .args_type  = "dirty_devices:-d,dirty_ring:-r,dirty_bitmap:-b,second:l,sample_pages_per_GB:l?",
+        .params     = "[-d] [-r] [-b] second [sample_pages_per_GB]",
         .help       = "start a round of guest dirty rate measurement (using -r to"
                       "\n\t\t\t specify dirty ring as the method of calculation and"
+                      "\n\t\t\t specify devices as the only scope and"
                       "\n\t\t\t -b to specify dirty bitmap as method of calculation)",
         .cmd        = hmp_calc_dirty_rate,
     },
