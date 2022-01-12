@@ -217,7 +217,7 @@ static void raven_set_irq(void *opaque, int irq_num, int level)
 }
 
 static AddressSpace *raven_pcihost_set_iommu(PCIBus *bus, void *opaque,
-                                             int devfn)
+                                             int devfn, PCIDevice *dev)
 {
     PREPPCIState *s = opaque;
 

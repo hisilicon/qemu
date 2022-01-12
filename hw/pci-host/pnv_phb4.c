@@ -1457,7 +1457,8 @@ static PnvPhb4DMASpace *pnv_phb4_dma_find(PnvPHB4 *phb, PCIBus *bus, int devfn)
     return ds;
 }
 
-static AddressSpace *pnv_phb4_dma_iommu(PCIBus *bus, void *opaque, int devfn)
+static AddressSpace *pnv_phb4_dma_iommu(PCIBus *bus, void *opaque,
+                                        int devfn, PCIDevice *dev)
 {
     PnvPHB4 *phb = opaque;
     PnvPhb4DMASpace *ds;
