@@ -1992,7 +1992,7 @@ static inline bool vtd_iova_canonicality_check(uint64_t iova,
     uint64_t va;
     uint8_t va_bits;
 
-    if (level != 4 || level != 5) {
+    if (level != 4 && level != 5) {
         error_report_once("%s: invalid level(%d) for first level paging.",
                           __func__, level);
         return false;
