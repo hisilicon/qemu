@@ -182,6 +182,8 @@ typedef struct cxl_component {
             struct PCIDevice *pdev;
         };
     };
+
+    ComplianceObject compliance;
 } CXLComponentState;
 
 void cxl_component_register_block_init(Object *obj,
@@ -202,5 +204,7 @@ static inline hwaddr cxl_decode_ig(int ig)
 }
 
 CXLComponentState *cxl_get_hb_cstate(PCIHostState *hb);
+
+bool cxl_doe_compliance_rsp(DOECap *doe_cap);
 
 #endif

@@ -12,6 +12,7 @@
 
 #include "hw/pci/pci.h"
 #include "hw/pci/pcie.h"
+#include "hw/cxl/cxl_compliance.h"
 
 #define CXL_VENDOR_ID 0x1e98
 

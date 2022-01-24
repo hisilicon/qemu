@@ -236,6 +236,9 @@ typedef struct cxl_type3_dev {
     /* State */
     CXLComponentState cxl_cstate;
     CXLDeviceState cxl_dstate;
+
+    /* DOE */
+    DOECap doe_comp;
 } CXLType3Dev;
 
 #ifndef TYPE_CXL_TYPE3_DEV
