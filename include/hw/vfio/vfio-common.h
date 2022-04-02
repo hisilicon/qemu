@@ -31,8 +31,11 @@
 #endif
 #include "sysemu/sysemu.h"
 #include "hw/vfio/vfio-container-obj.h"
+#include "hw/iommufd/device.h"
 
 #define VFIO_MSG_PREFIX "vfio %s: "
+
+#define TYPE_VFIO_IOMMU_DEVICE "qemu:vfio-iommu-device"
 
 enum {
     VFIO_DEVICE_TYPE_PCI = 0,
@@ -124,6 +127,7 @@ typedef struct VFIODevice {
     unsigned int num_regions;
     unsigned int flags;
     VFIOMigration *migration;
+    IOMMUFDDevice idev;
     Error *migration_blocker;
     OnOffAuto pre_copy_dirty_page_tracking;
     OnOffAuto iommufd_be;
