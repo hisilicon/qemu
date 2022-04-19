@@ -72,6 +72,9 @@ typedef struct AMDVIIOTLBEntry {
     uint64_t perms;             /* access permissions  */
     uint64_t translated_addr;   /* translated address  */
     uint64_t page_mask;         /* physical page size  */
+    uint16_t dte_flags;         /* device table entry flags */
+    uint64_t pte;               /* pte entry */
+    uint64_t pte_addr;          /* pte entry iova */
 } AMDVIIOTLBEntry;
 
 /* configure MMIO registers at startup/reset */
@@ -344,7 +347,8 @@ static void amdvi_iotlb_remove_page(AMDVIState *s, hwaddr addr,
 
 static void amdvi_update_iotlb(AMDVIState *s, uint16_t devid,
                                uint64_t gpa, IOMMUTLBEntry to_cache,
-                               uint16_t domid)
+                               uint16_t domid, uint16_t dte_flags,
+                               uint64_t pte, uint64_t pte_addr)
 {
     AMDVIIOTLBEntry *entry = g_new(AMDVIIOTLBEntry, 1);
     uint64_t *key = g_new(uint64_t, 1);
@@ -363,6 +367,9 @@ static void amdvi_update_iotlb(AMDVIState *s, uint16_t devid,
         entry->perms = to_cache.perm;
         entry->translated_addr = to_cache.translated_addr;
         entry->page_mask = to_cache.addr_mask;
+        entry->dte_flags = dte_flags;
+        entry->pte = pte;
+        entry->pte_addr = pte_addr;
         *key = gfn | ((uint64_t)(devid) << AMDVI_DEVID_SHIFT);
         g_hash_table_replace(s->iotlb, key, entry);
     }
@@ -900,7 +907,8 @@ static inline uint64_t amdvi_get_pte_entry(AMDVIState *s, uint64_t pte_addr,
 
 static void amdvi_page_walk(AMDVIAddressSpace *as, uint64_t *dte,
                             IOMMUTLBEntry *ret, unsigned perms,
-                            hwaddr addr)
+                            hwaddr addr, uint64_t *iotlb_pte,
+                            uint64_t *iotlb_pte_addr)
 {
     unsigned level, present, pte_perms, oldlevel;
     uint64_t pte = dte[0], pte_addr, page_mask;
@@ -949,6 +957,8 @@ static void amdvi_page_walk(AMDVIAddressSpace *as, uint64_t *dte,
         ret->translated_addr = (pte & AMDVI_DEV_PT_ROOT_MASK) & page_mask;
         ret->addr_mask = ~page_mask;
         ret->perm = amdvi_get_perms(pte);
+        *iotlb_pte = pte;
+        *iotlb_pte_addr = addr;
         return;
     }
 no_remap:
@@ -956,6 +966,8 @@ no_remap:
     ret->translated_addr = addr & AMDVI_PAGE_MASK_4K;
     ret->addr_mask = ~AMDVI_PAGE_MASK_4K;
     ret->perm = amdvi_get_perms(pte);
+    *iotlb_pte = pte;
+    *iotlb_pte_addr = addr;
 }
 
 static void amdvi_do_translate(AMDVIAddressSpace *as, hwaddr addr,
@@ -964,7 +976,7 @@ static void amdvi_do_translate(AMDVIAddressSpace *as, hwaddr addr,
     AMDVIState *s = as->iommu_state;
     uint16_t devid = PCI_BUILD_BDF(as->bus_num, as->devfn);
     AMDVIIOTLBEntry *iotlb_entry = amdvi_iotlb_lookup(s, addr, devid);
-    uint64_t entry[4];
+    uint64_t entry[4], pte, pte_addr;
 
     if (iotlb_entry) {
         trace_amdvi_iotlb_hit(PCI_BUS_NUM(devid), PCI_SLOT(devid),
@@ -986,10 +998,12 @@ static void amdvi_do_translate(AMDVIAddressSpace *as, hwaddr addr,
     }
 
     amdvi_page_walk(as, entry, ret,
-                    is_write ? AMDVI_PERM_WRITE : AMDVI_PERM_READ, addr);
+                    is_write ? AMDVI_PERM_WRITE : AMDVI_PERM_READ, addr,
+                    &pte, &pte_addr);
 
     amdvi_update_iotlb(s, devid, addr, *ret,
-                       entry[1] & AMDVI_DEV_DOMID_ID_MASK);
+                       entry[1] & AMDVI_DEV_DOMID_ID_MASK,
+                       entry[0] & ~AMDVI_DEV_PT_ROOT_MASK, pte, pte_addr);
     return;
 
 out:
