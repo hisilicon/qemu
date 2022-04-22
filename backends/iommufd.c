@@ -275,6 +275,25 @@ int iommufd_backend_alloc_hwpt(int iommufd, uint32_t dev_id,
     return !ret ? 0 : -errno;
 }
 
+int iommufd_backend_set_dirty_tracking(IOMMUFDBackend *be, uint32_t hwpt_id,
+                                       bool start)
+{
+    int ret;
+    struct iommu_hwpt_set_dirty set_dirty = {
+            .size = sizeof(set_dirty),
+            .hwpt_id = hwpt_id,
+            .flags = !start ? IOMMU_DIRTY_TRACKING_DISABLED :
+                        IOMMU_DIRTY_TRACKING_ENABLED,
+    };
+
+    ret = ioctl(be->fd, IOMMU_HWPT_SET_DIRTY, &set_dirty);
+    trace_iommufd_backend_set_dirty(be->fd, hwpt_id, start, ret);
+    if (ret) {
+        error_report("IOMMU_HWPT_SET_DIRTY failed: %s", strerror(errno));
+    }
+    return !ret ? 0 : -errno;
+}
+
 int iommufd_backend_invalidate_cache(int iommufd, uint32_t hwpt_id,
                                      uint32_t len, void *data_ptr)
 {

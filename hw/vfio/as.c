@@ -224,12 +224,16 @@ static bool vfio_devices_all_dirty_tracking(VFIOContainer *container)
     while ((vbasedev = vfio_container_dev_iter_next(container, vbasedev))) {
         VFIOMigration *migration = vbasedev->migration;
 
-        if (!migration) {
+        if (!migration && !vbasedev->iommufd) {
             return false;
         }
 
         if (vbasedev->pre_copy_dirty_page_tracking == ON_OFF_AUTO_OFF &&
             migration->device_state == VFIO_DEVICE_STATE_RUNNING) {
+            return false;
+        }
+
+        if (vbasedev->iommufd && !container->dirty_pages_supported) {
             return false;
         }
     }

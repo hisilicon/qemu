@@ -36,6 +36,7 @@
 #include "qemu/cutils.h"
 #include "qemu/char_dev.h"
 #include "exec/address-spaces.h"
+#include "migration/migration.h"
 
 static bool iommufd_check_extension(VFIOContainer *bcontainer,
                                     VFIOContainerFeature feat)
@@ -112,6 +113,26 @@ static int iommufd_unmap(VFIOContainer *bcontainer,
     /* TODO: Handle dma_unmap_bitmap with iotlb args (migration) */
     return iommufd_backend_unmap_dma(container->be,
                                      container->ioas_id, iova, size);
+}
+
+static int iommufd_set_dirty_page_tracking(VFIOContainer *bcontainer,
+                                           bool start)
+{
+    VFIOIOMMUFDContainer *container = container_of(bcontainer,
+                                                   VFIOIOMMUFDContainer, bcontainer);
+    int ret;
+    VFIOIOASHwpt *hwpt;
+
+    QLIST_FOREACH(hwpt, &container->hwpt_list, next) {
+        ret = iommufd_backend_set_dirty_tracking(container->be,
+                                                 hwpt->hwpt_id, start);
+        if (ret) {
+            return ret;
+        }
+    }
+
+    bcontainer->dirty_pages_supported = start;
+    return 0;
 }
 
 static int vfio_get_devicefd(const char *sysfs_path, Error **errp)
@@ -523,6 +544,7 @@ static int iommufd_attach_device(VFIODevice *vbasedev, AddressSpace *as,
             "memory listener initialization failed: ");
         goto error;
     }
+    bcontainer->dirty_pages_supported = true;
     bcontainer->initialized = true;
 
 out:
@@ -637,6 +659,7 @@ static void vfio_iommu_backend_iommufd_ops_class_init(ObjectClass *oc,
     ops->dma_unmap = iommufd_unmap;
     ops->attach_device = iommufd_attach_device;
     ops->detach_device = iommufd_detach_device;
+    ops->set_dirty_page_tracking = iommufd_set_dirty_page_tracking;
 }
 
 static int vfio_iommu_device_attach_hwpt(IOMMUFDDevice *idev,
