@@ -294,6 +294,32 @@ int iommufd_backend_set_dirty_tracking(IOMMUFDBackend *be, uint32_t hwpt_id,
     return !ret ? 0 : -errno;
 }
 
+int iommufd_backend_get_dirty_iova(IOMMUFDBackend *be, uint32_t hwpt_id,
+                                   uint64_t iova, ram_addr_t size,
+                                   uint64_t page_size, uint64_t *data)
+{
+    int ret;
+    struct iommu_hwpt_get_dirty_iova get_dirty_iova = {
+        .size = sizeof(get_dirty_iova),
+        .hwpt_id = hwpt_id,
+        .bitmap = {
+            .iova = iova, .length = size,
+            .page_size = page_size, .data = (__u64 *)data,
+        },
+    };
+
+    ret = ioctl(be->fd, IOMMU_HWPT_GET_DIRTY_IOVA, &get_dirty_iova);
+    trace_iommufd_backend_get_dirty_iova(be->fd, hwpt_id, iova, size,
+                                         page_size, ret);
+    if (ret) {
+        error_report("IOMMU_HWPT_GET_DIRTY_IOVA (iova: 0x%"PRIx64
+                     " size: 0x%"PRIx64") failed: %s", iova,
+                     size, strerror(errno));
+    }
+
+    return !ret ? 0 : -errno;
+}
+
 int iommufd_backend_invalidate_cache(int iommufd, uint32_t hwpt_id,
                                      uint32_t len, void *data_ptr)
 {
