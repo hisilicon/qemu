@@ -25,6 +25,7 @@
 #include "qemu/cutils.h"
 #include "qemu/chardev_open.h"
 #include "pci.h"
+#include "exec/ram_addr.h"
 #include "migration/migration.h"
 
 static int iommufd_map(const VFIOContainerBase *bcontainer, hwaddr iova,
@@ -132,6 +133,34 @@ static int iommufd_set_dirty_page_tracking(const VFIOContainerBase *bcontainer,
     }
 
     return 0;
+}
+
+static int iommufd_query_dirty_bitmap(const VFIOContainerBase *bcontainer,
+                                      VFIOBitmap *vbmap, uint64_t iova,
+                                      uint64_t size)
+{
+    VFIOIOMMUFDContainer *container = container_of(bcontainer,
+                                                   VFIOIOMMUFDContainer,
+                                                   bcontainer);
+    int ret;
+    VFIOIOASHwpt *hwpt;
+    unsigned long page_size;
+
+    if (!bcontainer->dirty_pages_supported) {
+        return 0;
+    }
+
+    page_size = qemu_real_host_page_size();
+    QLIST_FOREACH(hwpt, &container->hwpt_list, next) {
+        ret = iommufd_backend_get_dirty_iova(container->be, hwpt->hwpt_id,
+                                             iova, size, page_size,
+                                             vbmap->bitmap);
+        if (ret) {
+            break;
+        }
+    }
+
+    return ret;
 }
 
 static int iommufd_cdev_getfd(const char *sysfs_path, Error **errp)
@@ -716,4 +745,5 @@ const VFIOIOMMUOps vfio_iommufd_ops = {
     .detach_device = iommufd_detach_device,
     .pci_hot_reset = iommufd_pci_hot_reset,
     .set_dirty_page_tracking = iommufd_set_dirty_page_tracking,
+    .query_dirty_bitmap = iommufd_query_dirty_bitmap,
 };
