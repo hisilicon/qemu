@@ -43,4 +43,6 @@ int iommufd_backend_unmap_dma(IOMMUFDBackend *be, uint32_t ioas_id,
                               hwaddr iova, ram_addr_t size);
 int iommufd_backend_alloc_hwpt(int iommufd, uint32_t dev_id,
                                uint32_t pt_id, uint32_t *out_hwpt);
+int iommufd_backend_set_dirty_tracking(IOMMUFDBackend *be, uint32_t hwpt_id,
+                                       bool start);
 #endif

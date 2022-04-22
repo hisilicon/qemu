@@ -190,13 +190,17 @@ static bool vfio_devices_all_dirty_tracking(VFIOContainerBase *bcontainer)
     QLIST_FOREACH(vbasedev, &bcontainer->device_list, container_next) {
         VFIOMigration *migration = vbasedev->migration;
 
-        if (!migration) {
+        if (!migration && !vbasedev->iommufd) {
             return false;
         }
 
         if (vbasedev->pre_copy_dirty_page_tracking == ON_OFF_AUTO_OFF &&
             (vfio_device_state_is_running(vbasedev) ||
              vfio_device_state_is_precopy(vbasedev))) {
+            return false;
+        }
+
+        if (vbasedev->iommufd && !bcontainer->dirty_pages_supported) {
             return false;
         }
     }
