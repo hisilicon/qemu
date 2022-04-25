@@ -532,6 +532,7 @@ void gicv3_redist_movall_lpis(GICv3CPUState *src, GICv3CPUState *dest);
 
 void gicv3_redist_send_sgi(GICv3CPUState *cs, int grp, int irq, bool ns);
 void gicv3_init_cpuif(GICv3State *s);
+void gicv3_init_cpu_reginfo(CPUState *cs);
 
 /**
  * gicv3_cpuif_update:
