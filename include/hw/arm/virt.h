@@ -155,6 +155,7 @@ struct VirtMachineState {
     bool ras;
     bool mte;
     bool dtb_kaslr_seed;
+    bool pmu;
     OnOffAuto acpi;
     VirtGICType gic_version;
     VirtIOMMUType iommu;
