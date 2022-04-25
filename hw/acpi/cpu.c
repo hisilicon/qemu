@@ -677,12 +677,14 @@ void build_cpus_aml(Aml *table, MachineState *machine, CPUHotplugFeatures opts,
             aml_append(dev, method);
 
             /* build _MAT object */
-            assert(adevc && adevc->madt_cpu);
-            adevc->madt_cpu(adev, i, arch_ids, madt_buf,
-                            true); /* set enabled flag */
-            aml_append(dev, aml_name_decl("_MAT",
-                aml_buffer(madt_buf->len, (uint8_t *)madt_buf->data)));
-            g_array_free(madt_buf, true);
+            if (adevc && adevc->madt_cpu) {
+                assert(adevc && adevc->madt_cpu);
+                adevc->madt_cpu(adev, i, arch_ids, madt_buf,
+                                true); /* set enabled flag */
+                aml_append(dev, aml_name_decl("_MAT",
+                    aml_buffer(madt_buf->len, (uint8_t *)madt_buf->data)));
+                g_array_free(madt_buf, true);
+            }
 
             if (CPU(arch_ids->cpus[i].cpu) != first_cpu) {
                 method = aml_method("_EJ0", 1, AML_NOTSERIALIZED);
