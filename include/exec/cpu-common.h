@@ -112,6 +112,8 @@ size_t qemu_ram_pagesize_largest(void);
 void cpu_address_space_init(CPUState *cpu, int asidx,
                             const char *prefix, MemoryRegion *mr);
 
+void cpu_address_space_destroy(CPUState *cpu, int asidx);
+
 void cpu_physical_memory_rw(hwaddr addr, void *buf,
                             hwaddr len, bool is_write);
 static inline void cpu_physical_memory_read(hwaddr addr,
