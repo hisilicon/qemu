@@ -703,12 +703,15 @@ static void
 build_madt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
 {
     int i;
+    MachineClass *mc = MACHINE_GET_CLASS(vms);
+    const CPUArchIdList *apic_ids = mc->possible_cpu_arch_ids(MACHINE(vms));
     VirtMachineClass *vmc = VIRT_MACHINE_GET_CLASS(vms);
-    CPUArchIdList *possible_cpus = MACHINE(vms)->possible_cpus;
     const MemMapEntry *memmap = vms->memmap;
+    AcpiDeviceIfClass *advec;
     AcpiTable table = { .sig = "APIC", .rev = 3, .oem_id = vms->oem_id,
                         .oem_table_id = vms->oem_table_id };
 
+    advec = ACPI_DEVICE_IF_GET_CLASS(vms->acpi_dev);
     acpi_table_begin(&table, table_data);
     /* Local Interrupt Controller Address */
     build_append_int_noprefix(table_data, 0, 4);
@@ -727,40 +730,7 @@ build_madt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
     build_append_int_noprefix(table_data, 0, 3);   /* Reserved */
 
     for (i = 0; i < MACHINE(vms)->smp.max_cpus; i++) {
-        ARMCPU *armcpu = ARM_CPU(qemu_get_possible_cpu(i));
-        uint64_t physical_base_address = 0, gich = 0, gicv = 0;
-        uint32_t vgic_interrupt = vms->virt ? PPI(ARCH_GIC_MAINT_IRQ) : 0;
-        uint32_t pmu_interrupt = (armcpu && arm_feature(&armcpu->env, ARM_FEATURE_PMU)) || vms->pmu ?
-                                             PPI(VIRTUAL_PMU_IRQ) : 0;
-
-        if (vms->gic_version == 2) {
-            physical_base_address = memmap[VIRT_GIC_CPU].base;
-            gicv = memmap[VIRT_GIC_VCPU].base;
-            gich = memmap[VIRT_GIC_HYP].base;
-        }
-
-        /* 5.2.12.14 GIC Structure */
-        build_append_int_noprefix(table_data, 0xB, 1);  /* Type */
-        build_append_int_noprefix(table_data, 76, 1);   /* Length */
-        build_append_int_noprefix(table_data, 0, 2);    /* Reserved */
-        build_append_int_noprefix(table_data, i, 4);    /* GIC ID */
-        build_append_int_noprefix(table_data, i, 4);    /* ACPI Processor UID */
-        /* Flags */
-        build_append_int_noprefix(table_data, 1, 4);    /* Enabled */
-        /* Parking Protocol Version */
-        build_append_int_noprefix(table_data, 0, 4);
-        /* Performance Interrupt GSIV */
-        build_append_int_noprefix(table_data, pmu_interrupt, 4);
-        build_append_int_noprefix(table_data, 0, 8); /* Parked Address */
-        /* Physical Base Address */
-        build_append_int_noprefix(table_data, physical_base_address, 8);
-        build_append_int_noprefix(table_data, gicv, 8); /* GICV */
-        build_append_int_noprefix(table_data, gich, 8); /* GICH */
-        /* VGIC Maintenance interrupt */
-        build_append_int_noprefix(table_data, vgic_interrupt, 4);
-        build_append_int_noprefix(table_data, 0, 8);    /* GICR Base Address*/
-        /* MPIDR */
-        build_append_int_noprefix(table_data, cpu_to_le64(possible_cpus->cpus[i].arch_id), 8);
+        advec->madt_cpu(ACPI_DEVICE_IF(vms->acpi_dev), i, apic_ids, table_data, false);
     }
 
     if (vms->gic_version == 3) {
@@ -1167,4 +1137,49 @@ void virt_acpi_setup(VirtMachineState *vms)
      * in build_state.
      */
     acpi_build_tables_cleanup(&tables, false);
+}
+
+void virt_madt_cpu_entry(AcpiDeviceIf *adev, int uid,
+                         const CPUArchIdList *apic_ids, GArray *entry,
+                         bool force_enabled)
+{
+    MachineState *ms = MACHINE(qdev_get_machine());
+    VirtMachineState *vms = VIRT_MACHINE(ms);
+    uint32_t apic_id = apic_ids->cpus[uid].arch_id;
+    ARMCPU *armcpu = ARM_CPU(qemu_get_possible_cpu(uid));
+    uint64_t physical_base_address = 0, gich = 0, gicv = 0;
+    uint32_t vgic_interrupt = vms->virt ? PPI(ARCH_GIC_MAINT_IRQ) : 0;
+    uint32_t pmu_interrupt = (armcpu && arm_feature(&armcpu->env, ARM_FEATURE_PMU)) || vms->pmu ?
+        PPI(VIRTUAL_PMU_IRQ) : 0;
+    uint32_t flags;
+
+    flags = apic_ids->cpus[uid].cpu != NULL || force_enabled ? 1 : (1 << 3);
+
+    /* 5.2.12.14 GIC Structure */
+    build_append_int_noprefix(entry, 0xB, 1);  /* Type */
+    build_append_int_noprefix(entry, 76, 1);   /* Length */
+    build_append_int_noprefix(entry, 0, 2);    /* Reserved */
+    build_append_int_noprefix(entry, uid, 4);    /* GIC ID */
+    build_append_int_noprefix(entry, apic_id, 4);    /* ACPI Processor UID */
+    /* Flags */
+    build_append_int_noprefix(entry, flags, 4);
+    /* Parking Protocol Version */
+    build_append_int_noprefix(entry, 0, 4);
+    /* Performance Interrupt GSIV */
+    build_append_int_noprefix(entry, pmu_interrupt, 4);
+    build_append_int_noprefix(entry, 0, 8); /* Parked Address */
+    /* Physical Base Address */
+    if (vms->gic_version == 2) {
+            physical_base_address = vms->memmap[VIRT_GIC_CPU].base;
+            gicv = vms->memmap[VIRT_GIC_VCPU].base;
+            gich = vms->memmap[VIRT_GIC_HYP].base;
+    }
+    build_append_int_noprefix(entry, physical_base_address, 8);
+    build_append_int_noprefix(entry, gicv, 8);
+    build_append_int_noprefix(entry, gich, 8);
+    /* VGIC Maintenance interrupt */
+    build_append_int_noprefix(entry, vgic_interrupt, 4);
+    build_append_int_noprefix(entry, 0, 8);    /* GICR Base Address*/
+    /* MPIDR */
+    build_append_int_noprefix(entry, apic_id, 8);
 }

@@ -35,6 +35,7 @@
 #include "hw/boards.h"
 #include "hw/arm/boot.h"
 #include "hw/block/flash.h"
+#include "hw/acpi/acpi_dev_interface.h"
 #include "sysemu/kvm.h"
 #include "hw/intc/arm_gicv3_common.h"
 #include "qom/object.h"
@@ -203,5 +204,10 @@ static inline int virt_gicv3_redist_region_count(VirtMachineState *vms)
     return (MACHINE(vms)->smp.max_cpus > redist0_capacity &&
             vms->highmem_redists) ? 2 : 1;
 }
+
+
+void virt_madt_cpu_entry(AcpiDeviceIf *adev, int uid,
+                         const CPUArchIdList *apic_ids, GArray *entry,
+                         bool force_enabled);
 
 #endif /* QEMU_ARM_VIRT_H */
