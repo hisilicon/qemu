@@ -1181,8 +1181,17 @@ static Property arm_cpu_has_dsp_property =
 static Property arm_cpu_has_mpu_property =
             DEFINE_PROP_BOOL("has-mpu", ARMCPU, has_mpu, true);
 
+static Property arm_cpu_socketid_property =
+            DEFINE_PROP_INT32("socket-id", ARMCPU, socket_id, -1);
+
+static Property arm_cpu_clusterid_property =
+            DEFINE_PROP_INT32("cluster-id", ARMCPU, cluster_id, -1);
+
 static Property arm_cpu_coreid_property =
             DEFINE_PROP_INT32("core-id", ARMCPU, core_id, -1);
+
+static Property arm_cpu_threadid_property =
+            DEFINE_PROP_INT32("thread-id", ARMCPU, thread_id, -1);
 
 /* This is like DEFINE_PROP_UINT32 but it doesn't set the default value,
  * because the CPU initfn will have already set cpu->pmsav7_dregion to
@@ -1268,7 +1277,10 @@ void arm_cpu_post_init(Object *obj)
                                        OBJ_PROP_FLAG_READWRITE);
     }
 
+    qdev_property_add_static(DEVICE(obj), &arm_cpu_socketid_property);
+    qdev_property_add_static(DEVICE(obj), &arm_cpu_clusterid_property);
     qdev_property_add_static(DEVICE(obj), &arm_cpu_coreid_property);
+    qdev_property_add_static(DEVICE(obj), &arm_cpu_threadid_property);
 
 #ifndef CONFIG_USER_ONLY
     if (arm_feature(&cpu->env, ARM_FEATURE_EL3)) {

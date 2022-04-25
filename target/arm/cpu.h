@@ -1005,6 +1005,9 @@ struct ArchCPU {
 
     int32_t node_id; /* NUMA node this CPU belongs to */
     int32_t core_id; /* core-id of this ARM VCPU */
+    int32_t thread_id; /* thread-id of this ARM VCPU */
+    int32_t cluster_id;
+    int32_t socket_id;
 
     /* Used to synchronize KVM and QEMU in-kernel device levels */
     uint8_t device_irq_level;

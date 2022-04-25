@@ -2247,8 +2247,10 @@ static void machvirt_init(MachineState *machine)
         cs = CPU(cpuobj);
 
         aarch64 &= object_property_get_bool(cpuobj, "aarch64", NULL);
-        object_property_set_int(cpuobj, "core-id", n, NULL);
-
+        object_property_set_int(cpuobj, "socket-id", possible_cpus->cpus[n].props.socket_id, NULL);
+        object_property_set_int(cpuobj, "cluster-id", possible_cpus->cpus[n].props.cluster_id, NULL);
+        object_property_set_int(cpuobj, "core-id", possible_cpus->cpus[n].props.core_id, NULL);
+        object_property_set_int(cpuobj, "thread-id", possible_cpus->cpus[n].props.thread_id, NULL);
         if (!vms->secure) {
             object_property_set_bool(cpuobj, "has_el3", false, NULL);
         }
@@ -2917,6 +2919,7 @@ static void virt_cpu_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     ARMCPU *cpu = ARM_CPU(dev);
     CPUState *cs = CPU(dev);
     CPUArchId *cpu_slot;
+    uint32_t old_core_id;
 
     if (dev->hotplugged && !vms->acpi_dev) {
         error_setg(errp, "GED acpi device does not exists");
@@ -2952,9 +2955,13 @@ static void virt_cpu_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
      * core_id as cpu_index for now. Ideally, slot-index found out using
      * the topo info should have been the cpu-index.
      */
-    cs->cpu_index = cpu->core_id;
 
-    cpu_slot = virt_find_cpu_slot(ms, cpu->core_id);
+    old_core_id = cpu->thread_id + (cpu->core_id * ms->smp.threads) +
+        (cpu->cluster_id * ms->smp.threads * ms->smp.cores) +
+        (cpu->socket_id * ms->smp.threads * ms->smp.cores * ms->smp.clusters);
+    cs->cpu_index = old_core_id;
+    
+    cpu_slot = virt_find_cpu_slot(ms, old_core_id);//cpu->core_id);
     if (qemu_present_cpu(CPU(cpu_slot->cpu))) {
         error_setg(errp, "cpu %d with arch-id %" PRIu64 " exists",
                    cpu->core_id, cpu_slot->arch_id);
@@ -2976,9 +2983,14 @@ static void virt_cpu_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     CPUState *cs = CPU(dev);
     Error *local_err = NULL;
     CPUArchId *cpu_slot;
+    int32_t old_core_id;
 
+    old_core_id = cpu->thread_id + (cpu->core_id * ms->smp.threads) +
+        (cpu->cluster_id * ms->smp.threads * ms->smp.cores) +
+        (cpu->socket_id * ms->smp.threads * ms->smp.cores * ms->smp.clusters);
+    
     /* insert the cold/hot-plugged vcpu in the slot */
-    cpu_slot = virt_find_cpu_slot(ms, cpu->core_id);
+    cpu_slot = virt_find_cpu_slot(ms, old_core_id);
     cpu_slot->cpu = OBJECT(dev);
 
     if (dev->hotplugged) {
