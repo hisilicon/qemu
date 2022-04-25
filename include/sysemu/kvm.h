@@ -478,6 +478,9 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
                                        hwaddr *phys_addr);
 #endif
 
+int kvm_create_vcpu(CPUState *cpu);
+void kvm_park_vcpu(CPUState *cs);
+
 #endif /* NEED_CPU_H */
 
 void kvm_cpu_synchronize_state(CPUState *cpu);
