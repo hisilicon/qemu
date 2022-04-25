@@ -1182,16 +1182,16 @@ static Property arm_cpu_has_mpu_property =
             DEFINE_PROP_BOOL("has-mpu", ARMCPU, has_mpu, true);
 
 static Property arm_cpu_socketid_property =
-            DEFINE_PROP_INT32("socket-id", ARMCPU, socket_id, -1);
+            DEFINE_PROP_INT32("socket-id", ARMCPU, socket_id, 0);
 
 static Property arm_cpu_clusterid_property =
-            DEFINE_PROP_INT32("cluster-id", ARMCPU, cluster_id, -1);
+            DEFINE_PROP_INT32("cluster-id", ARMCPU, cluster_id, 0);
 
 static Property arm_cpu_coreid_property =
-            DEFINE_PROP_INT32("core-id", ARMCPU, core_id, -1);
+            DEFINE_PROP_INT32("core-id", ARMCPU, core_id, 0);
 
 static Property arm_cpu_threadid_property =
-            DEFINE_PROP_INT32("thread-id", ARMCPU, thread_id, -1);
+            DEFINE_PROP_INT32("thread-id", ARMCPU, thread_id, 0);
 
 /* This is like DEFINE_PROP_UINT32 but it doesn't set the default value,
  * because the CPU initfn will have already set cpu->pmsav7_dregion to
