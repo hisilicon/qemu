@@ -171,6 +171,9 @@ static VFIOIOASHwpt *vfio_container_get_hwpt(VFIOIOMMUFDContainer *container,
     }
 
     hwpt = g_malloc0(sizeof(*hwpt));
+    if (!hwpt) {
+        return NULL;
+    }
 
     hwpt->hwpt_id = hwpt_id;
     QLIST_INIT(&hwpt->device_list);
@@ -206,21 +209,23 @@ static VFIOIOASHwpt *vfio_find_hwpt_for_dev(VFIOIOMMUFDContainer *container,
 
 static void
 __vfio_device_detach_container(VFIODevice *vbasedev,
-                               VFIOIOMMUFDContainer *container, Error **errp)
+                               VFIOIOMMUFDContainer *container,
+                               uint32_t hwpt_id,
+                               Error **errp)
 {
-    struct vfio_device_detach_ioas detach_data = {
+    struct vfio_device_detach_hwpt detach_data = {
         .argsz = sizeof(detach_data),
         .flags = 0,
         .iommufd = container->iommufd,
-        .ioas_id = container->ioas_id,
+        .hwpt_id = hwpt_id,
     };
 
-    if (ioctl(vbasedev->fd, VFIO_DEVICE_DETACH_IOAS, &detach_data)) {
+    if (ioctl(vbasedev->fd, VFIO_DEVICE_DETACH_HWPT, &detach_data)) {
         error_setg_errno(errp, errno, "detach %s from ioas id=%d failed",
                          vbasedev->name, container->ioas_id);
     }
     trace_vfio_iommufd_detach_device(container->iommufd, vbasedev->name,
-                                     container->ioas_id);
+                                     hwpt_id);
 
     /* iommufd unbind is done per device fd close */
 }
@@ -230,16 +235,19 @@ static void vfio_device_detach_container(VFIODevice *vbasedev,
                                          Error **errp)
 {
     VFIOIOASHwpt *hwpt;
+    uint32_t hwpt_id;
 
     hwpt = vfio_find_hwpt_for_dev(container, vbasedev);
-    if (hwpt) {
-        QLIST_REMOVE(vbasedev, hwpt_next);
-        if (QLIST_EMPTY(&hwpt->device_list)) {
-            vfio_container_put_hwpt(hwpt);
-        }
+    if (!hwpt) {
+        return;
     }
 
-    __vfio_device_detach_container(vbasedev, container, errp);
+    hwpt_id = hwpt->hwpt_id;
+    QLIST_REMOVE(vbasedev, hwpt_next);
+    if (QLIST_EMPTY(&hwpt->device_list)) {
+        vfio_container_put_hwpt(hwpt);
+    }
+    __vfio_device_detach_container(vbasedev, container, hwpt_id, errp);
 }
 
 static int vfio_device_attach_container(VFIODevice *vbasedev,
@@ -288,6 +296,11 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
                                      attach_data.out_hwpt_id);
 
     hwpt = vfio_container_get_hwpt(container, attach_data.out_hwpt_id);
+    if (!hwpt) {
+        __vfio_device_detach_container(vbasedev, container,
+                                       attach_data.out_hwpt_id, errp);
+        return -1;
+    }
 
     QLIST_INSERT_HEAD(&hwpt->device_list, vbasedev, hwpt_next);
     return 0;
@@ -489,6 +502,7 @@ static void iommufd_detach_device(VFIODevice *vbasedev)
     VFIODevice *vbasedev_iter;
     VFIOIOASHwpt *hwpt;
     VFIOAddressSpace *space;
+    uint32_t hwpt_id;
     Error *err;
 
     if (!bcontainer) {
@@ -509,6 +523,7 @@ static void iommufd_detach_device(VFIODevice *vbasedev)
     }
     g_assert_not_reached();
 found:
+    hwpt_id = hwpt->hwpt_id;
     QLIST_REMOVE(vbasedev, hwpt_next);
     if (QLIST_EMPTY(&hwpt->device_list)) {
         vfio_container_put_hwpt(hwpt);
@@ -524,7 +539,7 @@ found:
     if (QLIST_EMPTY(&container->hwpt_list)) {
         vfio_as_del_container(space, bcontainer);
     }
-    __vfio_device_detach_container(vbasedev, container, &err);
+    __vfio_device_detach_container(vbasedev, container, hwpt_id, &err);
     if (err) {
         error_report_err(err);
     }
