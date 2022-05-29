@@ -503,7 +503,7 @@ static void iommufd_detach_device(VFIODevice *vbasedev)
     VFIOIOASHwpt *hwpt;
     VFIOAddressSpace *space;
     uint32_t hwpt_id;
-    Error *err;
+    Error *err = NULL;
 
     if (!bcontainer) {
         goto out;
