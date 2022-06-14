@@ -2320,10 +2320,7 @@ static void machvirt_init(MachineState *machine)
         }
 
         if (n < smp_cpus) {
-            char *core_id = g_strdup_printf("core%d", n);
-            qdev_set_id(DEVICE(cpuobj), core_id, &error_fatal);
             qdev_realize(DEVICE(cpuobj), NULL, &error_fatal);
-            g_free(core_id);
             object_unref(cpuobj);
         } else {
             CPUArchId *cpu_slot;
