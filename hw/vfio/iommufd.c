@@ -438,8 +438,8 @@ static int iommufd_attach_device(VFIODevice *vbasedev, AddressSpace *as,
      * fine to add the whole range as window. For SPAPR, below code
      * should be updated.
      */
-    vfio_host_win_add(bcontainer, 0, (hwaddr)-1, 4096);
-    bcontainer->pgsizes = 4096;
+    vfio_host_win_add(bcontainer, 0, (hwaddr)-1, sysconf(_SC_PAGE_SIZE));
+    bcontainer->pgsizes = sysconf(_SC_PAGE_SIZE);
 
     /*
      * TODO: kvmgroup, unable to do it before the protocol done
