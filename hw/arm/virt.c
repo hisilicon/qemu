@@ -2969,7 +2969,11 @@ static void virt_cpu_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     }
     virt_cpu_set_properties(OBJECT(cs), cpu_slot);
 
-    if (dev->hotplugged) {
+    /*
+     * ToDo: Find a better way to exclude initial boot cpus from cold/hot
+     * plug cpus here.
+     */
+    if (vms->acpi_dev) {
         virt_update_gic(vms, cs);
     }
 }
@@ -2994,15 +2998,19 @@ static void virt_cpu_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     cpu_slot->cpu = OBJECT(dev);
 
     if (dev->hotplugged) {
-        HotplugHandlerClass *hhc;
+    }
 
-        wire_gic_cpu_irqs(vms, cs);
+    /*
+     * ToDo: Find a better way to exclude initial boot cpus here.
+     * Update acpi hotplug state and send cpu hotplug event to guest.
+     */
+    if (vms->acpi_dev) {
+        hotplug_handler_plug(HOTPLUG_HANDLER(vms->acpi_dev), dev, &local_err);
+        if (local_err) {
+            goto out;
+        }
 
-        /* update acpi hotplug state and send cpu hotplug event to guest */
-        hhc = HOTPLUG_HANDLER_GET_CLASS(vms->acpi_dev);
-        hhc->plug(HOTPLUG_HANDLER(vms->acpi_dev), dev, &local_err);
-        if (local_err)
-            goto fail;
+	wire_gic_cpu_irqs(vms, cs);
 
         /* register this cpu for reset & update F/W info for the next boot */
         qemu_register_reset(do_cpu_reset, ARM_CPU(cs));
@@ -3013,8 +3021,7 @@ static void virt_cpu_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     }
 
     cs->disabled = false;
-    return;
-fail:
+out:
     error_propagate(errp, local_err);
 }
 
@@ -3022,9 +3029,7 @@ static void virt_cpu_unplug_request(HotplugHandler *hotplug_dev,
                                     DeviceState *dev, Error **errp)
 {
     VirtMachineState *vms = VIRT_MACHINE(hotplug_dev);
-    HotplugHandlerClass *hhc;
     CPUState *cs = CPU(dev);
-    Error *local_err = NULL;
 
     if (!vms->acpi_dev || !dev->realized) {
         error_setg(errp, "GED does not exists or device is not realized!");
@@ -3045,14 +3050,7 @@ static void virt_cpu_unplug_request(HotplugHandler *hotplug_dev,
     }
 
     /* request cpu hotplug from guest */
-    hhc = HOTPLUG_HANDLER_GET_CLASS(vms->acpi_dev);
-    hhc->unplug_request(HOTPLUG_HANDLER(vms->acpi_dev), dev, &local_err);
-    if (local_err)
-        goto fail;
-
-    return;
-fail:
-    error_propagate(errp, local_err);
+    hotplug_handler_unplug_request(HOTPLUG_HANDLER(vms->acpi_dev), dev, errp);
 }
 
 static void virt_cpu_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
@@ -3060,23 +3058,17 @@ static void virt_cpu_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
 {
     VirtMachineState *vms = VIRT_MACHINE(hotplug_dev);
     MachineState *ms = MACHINE(hotplug_dev);
-    HotplugHandlerClass *hhc;
     CPUState *cs = CPU(dev);
     Error *local_err = NULL;
     CPUArchId *cpu_slot;
 
-    if (!vms->acpi_dev || !dev->realized) {
-        error_setg(errp, "GED does not exists or device is not realized!");
-        return;
-    }
-
     cpu_slot = virt_find_cpu_slot(ms, ARM_CPU(cs)->core_id);
 
     /* update the acpi cpu hotplug state for cpu hot-unplug */
-    hhc = HOTPLUG_HANDLER_GET_CLASS(vms->acpi_dev);
-    hhc->unplug(HOTPLUG_HANDLER(vms->acpi_dev), dev, &local_err);
-    if (local_err)
-        goto fail;
+    hotplug_handler_unplug(HOTPLUG_HANDLER(vms->acpi_dev), dev, &local_err);
+    if (local_err) {
+        goto out;
+    }
 
     unwire_gic_cpu_irqs(vms, cs);
     virt_update_gic(vms, cs);
@@ -3092,8 +3084,7 @@ static void virt_cpu_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
 
     cpu_slot->cpu = NULL;
     cs->disabled = true;
-    return;
-fail:
+out:
     error_propagate(errp, local_err);
 }
 
