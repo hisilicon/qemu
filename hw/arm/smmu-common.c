@@ -25,6 +25,8 @@
 #include "qemu/jhash.h"
 #include "qemu/module.h"
 
+#include "sysemu/iommufd_device.h"
+
 #include "qemu/error-report.h"
 #include "hw/arm/smmu-common.h"
 #include "smmu-internal.h"
@@ -509,6 +511,13 @@ static void smmu_base_realize(DeviceState *dev, Error **errp)
                                      g_free, g_free);
     s->smmu_pcibus_by_busptr = g_hash_table_new(NULL, NULL);
 
+    if (s->iommufd) {
+        iommufd_backend_connect(s->iommufd, errp);
+        if (*errp) {
+            return;
+        }
+    }
+
     if (s->primary_bus) {
         pci_setup_iommu(s->primary_bus, &smmu_ops, s);
     } else {
@@ -528,6 +537,8 @@ static Property smmu_dev_properties[] = {
     DEFINE_PROP_UINT8("bus_num", SMMUState, bus_num, 0),
     DEFINE_PROP_LINK("primary-bus", SMMUState, primary_bus,
                      TYPE_PCI_BUS, PCIBus *),
+    DEFINE_PROP_LINK("iommufd", SMMUState, iommufd,
+                     TYPE_IOMMUFD_BACKEND, IOMMUFDBackend *),
     DEFINE_PROP_END_OF_LIST(),
 };
 
