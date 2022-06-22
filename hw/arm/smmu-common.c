@@ -734,6 +734,131 @@ SMMUDevice *smmu_find_sdev(SMMUState *s, uint32_t sid)
     return NULL;
 }
 
+int smmu_iommu_get_info(SMMUDevice *sdev, uint32_t *data_type,
+                        uint32_t data_len, void *data)
+{
+    if (!sdev || !sdev->idev) {
+        return -ENOENT;
+    }
+
+    return iommufd_device_get_info(sdev->idev, data_type, data_len, data);
+}
+
+void smmu_iommu_uninstall_nested_ste(SMMUState *s, SMMUDevice *sdev)
+{
+    SMMUHwpt *hwpt = sdev->hwpt;
+
+    if (!sdev || !hwpt || !sdev->idev) {
+        return;
+    }
+
+    if (iommufd_device_attach_hwpt(sdev->idev, s->s2_hwpt->hwpt_id)) {
+        error_report("Unable to attach dev to stage-2 HW pagetable");
+        return;
+    }
+
+    iommufd_backend_free_id(sdev->idev->iommufd, hwpt->hwpt_id);
+    g_free(hwpt);
+    sdev->hwpt = NULL;
+}
+
+/* IOMMUFD helpers */
+int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
+                                  uint32_t data_type, uint32_t data_len,
+                                  void *data)
+{
+    SMMUHwpt *hwpt = sdev->hwpt;
+    IOMMUFDDevice *idev;
+    int ret;
+
+    if (!s || !sdev || !s->iommufd || !s->s2_hwpt) {
+        return -ENOENT;
+    }
+
+    idev = sdev->idev;
+    if (!idev) {
+        return -ENOENT;
+    }
+
+    if (hwpt) {
+        smmu_iommu_uninstall_nested_ste(s, sdev);
+    }
+
+    hwpt = g_new0(SMMUHwpt, 1);
+    if (!hwpt) {
+        return -ENOMEM;
+    }
+
+    hwpt->smmu = sdev->smmu;
+    hwpt->iommufd = idev->iommufd->fd;
+
+    ret = iommufd_backend_alloc_hwpt(idev->iommufd, idev->dev_id,
+                                     s->s2_hwpt->hwpt_id, 0, data_type,
+                                     data_len, data, &hwpt->hwpt_id);
+    if (ret) {
+        error_report("Unable to allocate stage-1 HW pagetable: %d", ret);
+        goto free;
+    }
+
+    ret = iommufd_device_attach_hwpt(idev, hwpt->hwpt_id);
+    if (ret) {
+        error_report("Unable to attach dev to stage-1 HW pagetable: %d", ret);
+        goto free_hwpt;
+    }
+
+    sdev->hwpt = hwpt;
+
+    return 0;
+free_hwpt:
+    iommufd_backend_free_id(idev->iommufd, hwpt->hwpt_id);
+free:
+    g_free(hwpt);
+    sdev->hwpt = NULL;
+
+    return ret;
+}
+
+int smmu_iommu_invalidate_cache(SMMUDevice *sdev, uint32_t type, uint32_t len,
+                                uint32_t *num, void *reqs)
+{
+    IOMMUFDDevice *idev;
+    SMMUHwpt *hwpt;
+
+    if (!sdev) {
+        return -ENOENT;
+    }
+
+    idev = sdev->idev;
+    hwpt = sdev->hwpt;
+
+    if (!idev || !hwpt) {
+        return -ENOENT;
+    }
+
+    return iommufd_backend_invalidate_cache(idev->iommufd, hwpt->hwpt_id,
+                                            type, len, num, reqs);
+}
+
+int smmu_iommu_dev_invalidate_cache(SMMUDevice *sdev, uint32_t type,
+                                    uint32_t len, uint32_t *num, void *reqs)
+{
+    IOMMUFDDevice *idev;
+    SMMUHwpt *hwpt;
+
+    if (!sdev) {
+        return -ENOENT;
+    }
+
+    idev = sdev->idev;
+    hwpt = sdev->hwpt;
+
+    if (!idev || !hwpt) {
+        return -ENOENT;
+    }
+
+    return iommufd_device_invalidate_cache(idev, type, len, num, reqs);
+}
+
 /* Unmap all notifiers attached to @mr */
 static void smmu_inv_notifiers_mr(IOMMUMemoryRegion *mr)
 {

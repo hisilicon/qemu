@@ -120,6 +120,7 @@ typedef struct SMMUDevice {
     int                devfn;
     IOMMUMemoryRegion  iommu;
     IOMMUFDDevice      *idev;
+    SMMUHwpt           *hwpt;
     AddressSpace       as;
     AddressSpace       as_sysmem;
     uint32_t           cfg_cache_hits;
@@ -217,4 +218,15 @@ void smmu_iotlb_inv_iova(SMMUState *s, int asid, int vmid, dma_addr_t iova,
 /* Unmap the range of all the notifiers registered to any IOMMU mr */
 void smmu_inv_notifiers_all(SMMUState *s);
 
+/* IOMMUFD helpers */
+int smmu_iommu_get_info(SMMUDevice *sdev, uint32_t *data_type,
+                        uint32_t data_len, void *data);
+int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
+                                  uint32_t data_type, uint32_t data_len,
+                                  void *data);
+void smmu_iommu_uninstall_nested_ste(SMMUState *s, SMMUDevice *sdev);
+int smmu_iommu_invalidate_cache(SMMUDevice *sdev, uint32_t type, uint32_t len,
+                                uint32_t *num, void *reqs);
+int smmu_iommu_dev_invalidate_cache(SMMUDevice *sdev, uint32_t type,
+                                    uint32_t len, uint32_t *num, void *reqs);
 #endif /* HW_ARM_SMMU_COMMON_H */
