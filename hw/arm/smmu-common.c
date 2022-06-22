@@ -20,6 +20,7 @@
 #include "trace.h"
 #include "exec/target_page.h"
 #include "hw/core/cpu.h"
+#include "hw/pci/pci_device.h"
 #include "hw/qdev-properties.h"
 #include "qapi/error.h"
 #include "qemu/jhash.h"
@@ -571,12 +572,9 @@ SMMUPciBus *smmu_find_smmu_pcibus(SMMUState *s, uint8_t bus_num)
     return NULL;
 }
 
-static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
+static SMMUPciBus *smmu_get_sbus(SMMUState *s, PCIBus *bus)
 {
-    SMMUState *s = opaque;
     SMMUPciBus *sbus = g_hash_table_lookup(s->smmu_pcibus_by_busptr, bus);
-    SMMUDevice *sdev;
-    static unsigned int index;
 
     if (!sbus) {
         sbus = g_malloc0(sizeof(SMMUPciBus) +
@@ -585,7 +583,15 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
         g_hash_table_insert(s->smmu_pcibus_by_busptr, bus, sbus);
     }
 
-    sdev = sbus->pbdev[devfn];
+    return sbus;
+}
+
+static SMMUDevice *smmu_get_sdev(SMMUState *s, SMMUPciBus *sbus,
+                                 PCIBus *bus, int devfn)
+{
+    SMMUDevice *sdev = sbus->pbdev[devfn];
+    static unsigned int index;
+
     if (!sdev) {
         char *name = g_strdup_printf("%s-%d-%d", s->mrtypename, devfn, index++);
 
@@ -604,11 +610,109 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
         g_free(name);
     }
 
+    return sdev;
+}
+
+static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
+{
+    SMMUState *s = opaque;
+    SMMUPciBus *sbus = smmu_get_sbus(s, bus);
+    SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
+
     return &sdev->as;
+}
+
+static int smmu_dev_set_iommu_device(PCIBus *bus, void *opaque, int devfn,
+                                     IOMMUFDDevice *idev, Error **errp)
+{
+    SMMUState *s = opaque;
+    SMMUPciBus *sbus = smmu_get_sbus(s, bus);
+    SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
+    int ret;
+
+    if (!s->iommufd) {
+        return -ENOENT;
+    }
+
+    if (!s->nested) {
+        return 0;
+    }
+
+    if (QLIST_EMPTY(&s->devices_with_nesting)) {
+        uint32_t s2_hwpt_id;
+
+        ret = iommufd_backend_alloc_hwpt(s->iommufd, idev->dev_id,
+                                         idev->ioas_id,
+                                         IOMMU_HWPT_ALLOC_NEST_PARENT,
+                                         IOMMU_HWPT_DATA_NONE, 0, NULL,
+                                         &s2_hwpt_id);
+        if (ret) {
+            error_setg(errp, "failed to allocate an S2 hwpt");
+            return ret;
+        }
+
+        s->s2_hwpt = g_malloc0(sizeof(*s->s2_hwpt));
+        s->s2_hwpt->ioas_id = idev->ioas_id;
+        s->s2_hwpt->iommufd = s->iommufd->fd;
+        s->s2_hwpt->hwpt_id = s2_hwpt_id;
+    }
+
+    ret = iommufd_device_attach_hwpt(idev, s->s2_hwpt->hwpt_id);
+    if (ret) {
+        if (QLIST_EMPTY(&s->devices_with_nesting)) {
+            iommufd_backend_free_id(s->iommufd, s->s2_hwpt->hwpt_id);
+            g_free(s->s2_hwpt);
+            s->s2_hwpt = NULL;
+        }
+        error_report("Unable to attach dev to stage-2 HW pagetable: %d", ret);
+        return ret;
+    }
+
+    sdev->idev = idev;
+    QLIST_INSERT_HEAD(&s->devices_with_nesting, sdev, next);
+    trace_smmu_set_iommu_device(devfn, smmu_get_sid(sdev));
+
+    return 0;
+}
+
+static void smmu_dev_unset_iommu_device(PCIBus *bus, void *opaque, int devfn)
+{
+    SMMUState *s = opaque;
+    SMMUPciBus *sbus = g_hash_table_lookup(s->smmu_pcibus_by_busptr, bus);
+    SMMUDevice *sdev;
+
+    if (!s->iommufd || !s->nested) {
+        return;
+    }
+
+    if (!sbus) {
+        return;
+    }
+
+    sdev = sbus->pbdev[devfn];
+    if (!sdev) {
+        return;
+    }
+
+    if (iommufd_device_attach_hwpt(sdev->idev, sdev->idev->ioas_id)) {
+        error_report("Unable to attach dev to the default HW pagetable");
+    }
+
+    QLIST_REMOVE(sdev, next);
+    sdev->idev = NULL;
+    trace_smmu_unset_iommu_device(devfn, smmu_get_sid(sdev));
+
+    if (QLIST_EMPTY(&s->devices_with_nesting)) {
+        iommufd_backend_free_id(s->iommufd, s->s2_hwpt->hwpt_id);
+        g_free(s->s2_hwpt);
+        s->s2_hwpt = NULL;
+    }
 }
 
 static const PCIIOMMUOps smmu_ops = {
     .get_address_space = smmu_find_add_as,
+    .set_iommu_device = smmu_dev_set_iommu_device,
+    .unset_iommu_device = smmu_dev_unset_iommu_device,
 };
 
 SMMUDevice *smmu_find_sdev(SMMUState *s, uint32_t sid)
