@@ -20,6 +20,7 @@
 #include "trace.h"
 #include "exec/target_page.h"
 #include "hw/core/cpu.h"
+#include "hw/pci/pci_device.h"
 #include "hw/qdev-properties.h"
 #include "qapi/error.h"
 #include "qemu/jhash.h"
@@ -415,13 +416,9 @@ SMMUPciBus *smmu_find_smmu_pcibus(SMMUState *s, uint8_t bus_num)
     return NULL;
 }
 
-static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque,
-                                      int devfn, PCIDevice *dev)
+static SMMUPciBus *smmu_get_sbus(SMMUState *s, PCIBus *bus)
 {
-    SMMUState *s = opaque;
     SMMUPciBus *sbus = g_hash_table_lookup(s->smmu_pcibus_by_busptr, bus);
-    SMMUDevice *sdev;
-    static unsigned int index;
 
     if (!sbus) {
         sbus = g_malloc0(sizeof(SMMUPciBus) +
@@ -430,7 +427,15 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque,
         g_hash_table_insert(s->smmu_pcibus_by_busptr, bus, sbus);
     }
 
-    sdev = sbus->pbdev[devfn];
+    return sbus;
+}
+
+static SMMUDevice *smmu_get_sdev(SMMUState *s, SMMUPciBus *sbus,
+                                 PCIBus *bus, int devfn)
+{
+    SMMUDevice *sdev = sbus->pbdev[devfn];
+    static unsigned int index;
+
     if (!sdev) {
         char *name = g_strdup_printf("%s-%d-%d", s->mrtypename, devfn, index++);
 
@@ -449,11 +454,67 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque,
         g_free(name);
     }
 
+    return sdev;
+}
+
+static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque,
+                                      int devfn, PCIDevice *dev)
+{
+    SMMUState *s = opaque;
+    SMMUPciBus *sbus = smmu_get_sbus(s, bus);
+    SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
+
     return &sdev->as;
+}
+
+static int smmu_dev_set_iommu_device(PCIBus *bus, void *opaque,
+                                     int devfn, PCIDevice *dev,
+                                     IOMMUFDDevice *idev)
+{
+    SMMUState *s = opaque;
+    SMMUPciBus *sbus = smmu_get_sbus(s, bus);
+    SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
+
+    if (!s->iommufd || s->iommufd->fd < 0) {
+        return -ENOENT;
+    }
+
+    sdev->idev = idev;
+    QLIST_INSERT_HEAD(&s->devices_with_notifiers, sdev, next);
+    trace_smmu_set_iommu_device(dev->name, smmu_get_sid(sdev));
+
+    return 0;
+}
+
+static void smmu_dev_unset_iommu_device(PCIBus *bus, void *opaque,
+                                        int devfn, PCIDevice *dev)
+{
+    SMMUState *s = opaque;
+    SMMUPciBus *sbus = g_hash_table_lookup(s->smmu_pcibus_by_busptr, bus);
+    SMMUDevice *sdev;
+
+    if (!s->iommufd || s->iommufd->fd < 0) {
+        return;
+    }
+
+    if (!sbus) {
+        return;
+    }
+
+    sdev = sbus->pbdev[devfn];
+    if (!sdev) {
+        return;
+    }
+
+    QLIST_REMOVE(sdev, next);
+    sdev->idev = NULL;
+    trace_smmu_unset_iommu_device(dev->name, smmu_get_sid(sdev));
 }
 
 static const PCIIOMMUOps smmu_ops = {
     .get_address_space = smmu_find_add_as,
+    .set_iommu_device = smmu_dev_set_iommu_device,
+    .unset_iommu_device = smmu_dev_unset_iommu_device,
 };
 
 IOMMUMemoryRegion *smmu_iommu_mr(SMMUState *s, uint32_t sid)

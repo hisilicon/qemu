@@ -85,6 +85,7 @@ typedef struct SMMUDevice {
     PCIBus             *bus;
     int                devfn;
     IOMMUMemoryRegion  iommu;
+    IOMMUFDDevice      *idev;
     AddressSpace       as;
     uint32_t           cfg_cache_hits;
     uint32_t           cfg_cache_misses;
