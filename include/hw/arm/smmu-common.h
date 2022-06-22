@@ -82,12 +82,19 @@ typedef struct SMMUTransCfg {
     uint32_t iotlb_misses;     /* counts IOTLB misses for this asid */
 } SMMUTransCfg;
 
+typedef struct SMMUHwpt {
+    void *smmu;
+    uint32_t hwpt_id;
+    int iommufd;
+} SMMUHwpt;
+
 typedef struct SMMUDevice {
     void               *smmu;
     PCIBus             *bus;
     int                devfn;
     IOMMUMemoryRegion  iommu;
     IOMMUFDDevice      *idev;
+    SMMUHwpt           *hwpt;
     AddressSpace       as;
     uint32_t           cfg_cache_hits;
     uint32_t           cfg_cache_misses;
@@ -173,6 +180,13 @@ void smmu_iotlb_inv_all(SMMUState *s);
 void smmu_iotlb_inv_asid(SMMUState *s, uint16_t asid);
 void smmu_iotlb_inv_iova(SMMUState *s, int asid, dma_addr_t iova,
                          uint8_t tg, uint64_t num_pages, uint8_t ttl);
+/* IOMMUFD helpers */
+int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
+                                  uint32_t data_type, uint32_t data_len,
+                                  void *data);
+void smmu_iommu_uninstall_nested_ste(SMMUDevice *sdev);
+int smmu_iommu_invalidate_cache(SMMUDevice *sdev, uint32_t data_type,
+                                uint32_t data_len, void *data);
 
 /* Unmap the range of all the notifiers registered to any IOMMU mr */
 void smmu_inv_notifiers_all(SMMUState *s);
