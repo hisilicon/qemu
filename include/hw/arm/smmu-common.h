@@ -107,11 +107,19 @@ typedef struct SMMUTransCfg {
     struct SMMUS2Cfg s2cfg;
 } SMMUTransCfg;
 
+typedef struct SMMUHwpt {
+    void *smmu;
+    uint32_t ioas_id;
+    uint32_t hwpt_id;
+    int iommufd;
+} SMMUHwpt;
+
 typedef struct SMMUDevice {
     void               *smmu;
     PCIBus             *bus;
     int                devfn;
     IOMMUMemoryRegion  iommu;
+    IOMMUFDDevice      *idev;
     AddressSpace       as;
     uint32_t           cfg_cache_hits;
     uint32_t           cfg_cache_misses;
@@ -138,6 +146,7 @@ struct SMMUState {
     MemoryRegion iomem;
     /* /dev/iommu interface */
     IOMMUFDBackend *iommufd;
+    SMMUHwpt *s2_hwpt;
     bool nested;
 
     GHashTable *smmu_pcibus_by_busptr;
@@ -146,6 +155,7 @@ struct SMMUState {
     SMMUPciBus *smmu_pcibus_by_bus_num[SMMU_PCI_BUS_MAX];
     PCIBus *pci_bus;
     QLIST_HEAD(, SMMUDevice) devices_with_notifiers;
+    QLIST_HEAD(, SMMUDevice) devices_with_nesting;
     uint8_t bus_num;
     PCIBus *primary_bus;
 };
