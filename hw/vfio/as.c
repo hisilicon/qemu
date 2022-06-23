@@ -418,16 +418,166 @@ hostwin_from_range(VFIOContainer *container, hwaddr iova, hwaddr end)
     return NULL;
 }
 
+static int vfio_dma_map_ram_section(VFIOContainer *container,
+                                    VFIOContainer **src_container,
+                                    MemoryRegionSection *section, Error **err)
+{
+    bool copy_dma_supported = false;
+    VFIOHostDMAWindow *hostwin;
+    Int128 llend, llsize;
+    hwaddr iova, end;
+    void *vaddr;
+    int ret;
+
+    assert(memory_region_is_ram(section->mr));
+
+    iova = TARGET_PAGE_ALIGN(section->offset_within_address_space);
+    llend = int128_make64(section->offset_within_address_space);
+    llend = int128_add(llend, section->size);
+    llend = int128_and(llend, int128_exts64(TARGET_PAGE_MASK));
+    end = int128_get64(int128_sub(llend, int128_one()));
+
+    /*
+     * For RAM memory regions with a RamDiscardManager, we only want to map the
+     * actually populated parts - and update the mapping whenever we're notified
+     * about changes.
+     */
+    if (memory_region_has_ram_discard_manager(section->mr)) {
+        vfio_register_ram_discard_listener(container, section);
+        return 0;
+    }
+
+    vaddr = memory_region_get_ram_ptr(section->mr) +
+            section->offset_within_region +
+            (iova - section->offset_within_address_space);
+
+    hostwin = hostwin_from_range(container, iova, end);
+    if (!hostwin) {
+        error_setg(err, "Container %p can't map guest IOVA region"
+                   " 0x%"HWADDR_PRIx"..0x%"HWADDR_PRIx, container, iova, end);
+        return -EFAULT;
+    }
+
+    trace_vfio_dma_map_ram(iova, end, vaddr);
+
+    llsize = int128_sub(llend, int128_make64(iova));
+
+    if (memory_region_is_ram_device(section->mr)) {
+        hwaddr pgmask = (1ULL << ctz64(hostwin->iova_pgsizes)) - 1;
+
+        if ((iova & pgmask) || (int128_get64(llsize) & pgmask)) {
+            trace_vfio_listener_region_add_no_dma_map(
+                memory_region_name(section->mr),
+                section->offset_within_address_space,
+                int128_getlo(section->size),
+                pgmask + 1);
+            return 0;
+        }
+    }
+
+    copy_dma_supported = vfio_container_check_extension(container,
+                                                        VFIO_FEAT_DMA_COPY);
+    copy_dma_supported &= src_container && *src_container;
+
+    if (copy_dma_supported) {
+        if (!vfio_container_dma_copy(*src_container, container,
+                                     iova, int128_get64(llsize),
+                                     section->readonly)) {
+            return 0;
+        } else {
+            info_report("IOAS copy failed try map for container: %p", container);
+        }
+    }
+
+    ret = vfio_container_dma_map(container, iova, int128_get64(llsize),
+                                 vaddr, section->readonly);
+    if (ret) {
+        error_setg(err, "vfio_container_dma_map(%p, 0x%"HWADDR_PRIx", "
+                   "0x%"HWADDR_PRIx", %p) = %d (%m)", container, iova,
+                   int128_get64(llsize), vaddr, ret);
+        if (memory_region_is_ram_device(section->mr)) {
+            /* Allow unexpected mappings not to be fatal for RAM devices */
+            error_report_err(*err);
+            *err = NULL;
+            return 0;
+        }
+        return ret;
+    }
+
+    if (copy_dma_supported) {
+        *src_container = container;
+    }
+
+    return ret;
+}
+
+static void vfio_dma_unmap_ram_section(VFIOContainer *container,
+                                       MemoryRegionSection *section)
+{
+    bool try_unmap = true;
+    Int128 llend, llsize;
+    hwaddr iova, end;
+    int ret;
+
+    iova = REAL_HOST_PAGE_ALIGN(section->offset_within_address_space);
+    llend = int128_make64(section->offset_within_address_space);
+    llend = int128_add(llend, section->size);
+    llend = int128_and(llend, int128_exts64(qemu_real_host_page_mask()));
+
+    if (int128_ge(int128_make64(iova), llend)) {
+        return;
+    }
+    end = int128_get64(int128_sub(llend, int128_one()));
+
+    llsize = int128_sub(llend, int128_make64(iova));
+
+    trace_vfio_dma_unmap_ram(iova, end);
+
+    if (memory_region_is_ram_device(section->mr)) {
+        hwaddr pgmask;
+        VFIOHostDMAWindow *hostwin = hostwin_from_range(container, iova, end);
+
+        assert(hostwin); /* or region_add() would have failed */
+
+        pgmask = (1ULL << ctz64(hostwin->iova_pgsizes)) - 1;
+        try_unmap = !((iova & pgmask) || (int128_get64(llsize) & pgmask));
+    } else if (memory_region_has_ram_discard_manager(section->mr)) {
+        vfio_unregister_ram_discard_listener(container, section);
+        /* Unregistering will trigger an unmap. */
+        try_unmap = false;
+    }
+
+    if (try_unmap) {
+        if (int128_eq(llsize, int128_2_64())) {
+            /* The unmap ioctl doesn't accept a full 64-bit span. */
+            llsize = int128_rshift(llsize, 1);
+            ret = vfio_container_dma_unmap(container, iova,
+                                           int128_get64(llsize), NULL);
+            if (ret) {
+                error_report("vfio_dma_unmap(%p, 0x%"HWADDR_PRIx", "
+                             "0x%"HWADDR_PRIx") = %d (%m)",
+                             container, iova, int128_get64(llsize), ret);
+            }
+            iova += int128_get64(llsize);
+        }
+        ret = vfio_container_dma_unmap(container, iova,
+                                       int128_get64(llsize), NULL);
+        if (ret) {
+            error_report("vfio_dma_unmap(%p, 0x%"HWADDR_PRIx", "
+                         "0x%"HWADDR_PRIx") = %d (%m)",
+                         container, iova, int128_get64(llsize), ret);
+        }
+    }
+}
+
 static void vfio_container_region_add(VFIOContainer *container,
                                       VFIOContainer **src_container,
                                       MemoryRegionSection *section)
 {
     hwaddr iova, end;
-    Int128 llend, llsize;
-    void *vaddr;
+    Int128 llend;
     int ret;
     VFIOHostDMAWindow *hostwin;
-    bool copy_dma_supported = false;
     Error *err = NULL;
 
     if (vfio_listener_skipped_section(section)) {
@@ -532,68 +682,10 @@ static void vfio_container_region_add(VFIOContainer *container,
     }
 
     /* Here we assume that memory_region_is_ram(section->mr)==true */
-
-    /*
-     * For RAM memory regions with a RamDiscardManager, we only want to map the
-     * actually populated parts - and update the mapping whenever we're notified
-     * about changes.
-     */
-    if (memory_region_has_ram_discard_manager(section->mr)) {
-        vfio_register_ram_discard_listener(container, section);
-        return;
-    }
-
-    vaddr = memory_region_get_ram_ptr(section->mr) +
-            section->offset_within_region +
-            (iova - section->offset_within_address_space);
-
-    trace_vfio_listener_region_add_ram(iova, end, vaddr);
-
-    llsize = int128_sub(llend, int128_make64(iova));
-
-    if (memory_region_is_ram_device(section->mr)) {
-        hwaddr pgmask = (1ULL << ctz64(hostwin->iova_pgsizes)) - 1;
-
-        if ((iova & pgmask) || (int128_get64(llsize) & pgmask)) {
-            trace_vfio_listener_region_add_no_dma_map(
-                memory_region_name(section->mr),
-                section->offset_within_address_space,
-                int128_getlo(section->size),
-                pgmask + 1);
-            return;
-        }
-    }
-
-    copy_dma_supported = vfio_container_check_extension(container,
-                                                        VFIO_FEAT_DMA_COPY);
-
-    if (copy_dma_supported && *src_container) {
-        if (!vfio_container_dma_copy(*src_container, container,
-                                     iova, int128_get64(llsize),
-                                     section->readonly)) {
-            return;
-        } else {
-            info_report("IOAS copy failed try map for container: %p", container);
-        }
-    }
-
-    ret = vfio_container_dma_map(container, iova, int128_get64(llsize),
-                                 vaddr, section->readonly);
-    if (ret) {
-        error_setg(&err, "vfio_container_dma_map(%p, 0x%"HWADDR_PRIx", "
-                   "0x%"HWADDR_PRIx", %p) = %d (%m)", container, iova,
-                   int128_get64(llsize), vaddr, ret);
-        if (memory_region_is_ram_device(section->mr)) {
-            /* Allow unexpected mappings not to be fatal for RAM devices */
-            error_report_err(err);
-            return;
-        }
+    if (vfio_dma_map_ram_section(container, src_container, section, &err)) {
         goto fail;
     }
 
-    if (copy_dma_supported) {
-        *src_container = container;
-    }
     return;
 
 fail:
@@ -636,10 +728,6 @@ static void vfio_listener_region_add(MemoryListener *listener,
 static void vfio_container_region_del(VFIOContainer *container,
                                       MemoryRegionSection *section)
 {
-    hwaddr iova, end;
-    Int128 llend, llsize;
-    int ret;
-    bool try_unmap = true;
 
     if (vfio_listener_skipped_section(section)) {
         trace_vfio_listener_region_del_skip(
@@ -687,55 +775,7 @@ static void vfio_container_region_del(VFIOContainer *container,
          */
     }
 
-    iova = REAL_HOST_PAGE_ALIGN(section->offset_within_address_space);
-    llend = int128_make64(section->offset_within_address_space);
-    llend = int128_add(llend, section->size);
-    llend = int128_and(llend, int128_exts64(qemu_real_host_page_mask()));
-
-    if (int128_ge(int128_make64(iova), llend)) {
-        return;
-    }
-    end = int128_get64(int128_sub(llend, int128_one()));
-
-    llsize = int128_sub(llend, int128_make64(iova));
-
-    trace_vfio_listener_region_del(iova, end);
-
-    if (memory_region_is_ram_device(section->mr)) {
-        hwaddr pgmask;
-        VFIOHostDMAWindow *hostwin = hostwin_from_range(container, iova, end);
-
-        assert(hostwin); /* or region_add() would have failed */
-
-        pgmask = (1ULL << ctz64(hostwin->iova_pgsizes)) - 1;
-        try_unmap = !((iova & pgmask) || (int128_get64(llsize) & pgmask));
-    } else if (memory_region_has_ram_discard_manager(section->mr)) {
-        vfio_unregister_ram_discard_listener(container, section);
-        /* Unregistering will trigger an unmap. */
-        try_unmap = false;
-    }
-
-    if (try_unmap) {
-        if (int128_eq(llsize, int128_2_64())) {
-            /* The unmap ioctl doesn't accept a full 64-bit span. */
-            llsize = int128_rshift(llsize, 1);
-            ret = vfio_container_dma_unmap(container, iova,
-                                           int128_get64(llsize), NULL);
-            if (ret) {
-                error_report("vfio_dma_unmap(%p, 0x%"HWADDR_PRIx", "
-                             "0x%"HWADDR_PRIx") = %d (%m)",
-                             container, iova, int128_get64(llsize), ret);
-            }
-            iova += int128_get64(llsize);
-        }
-        ret = vfio_container_dma_unmap(container, iova,
-                                       int128_get64(llsize), NULL);
-        if (ret) {
-            error_report("vfio_dma_unmap(%p, 0x%"HWADDR_PRIx", "
-                         "0x%"HWADDR_PRIx") = %d (%m)",
-                         container, iova, int128_get64(llsize), ret);
-        }
-    }
+    vfio_dma_unmap_ram_section(container, section);
 
     memory_region_unref(section->mr);
 
