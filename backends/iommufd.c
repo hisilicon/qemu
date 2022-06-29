@@ -137,18 +137,18 @@ static int iommufd_backend_alloc_ioas(int fd, uint32_t *ioas)
     return ret;
 }
 
-static void iommufd_backend_free_ioas(int fd, uint32_t ioas)
+void iommufd_backend_free_id(int fd, uint32_t id)
 {
     int ret;
     struct iommu_destroy des = {
         .size = sizeof(des),
-        .id = ioas,
+        .id = id,
     };
 
     ret = ioctl(fd, IOMMU_DESTROY, &des);
-    trace_iommufd_backend_free_ioas(fd, ioas, ret);
+    trace_iommufd_backend_free_id(fd, id, ret);
     if (ret) {
-        error_report("Failed to free ioas: %u %m", ioas);
+        error_report("Failed to free id: %u %m", id);
     }
 }
 
@@ -164,7 +164,7 @@ int iommufd_backend_get_ioas(IOMMUFDBackend *be, uint32_t *ioas_id)
 void iommufd_backend_put_ioas(IOMMUFDBackend *be, uint32_t ioas)
 {
     trace_iommufd_backend_put_ioas(be->fd, ioas);
-    iommufd_backend_free_ioas(be->fd, ioas);
+    iommufd_backend_free_id(be->fd, ioas);
 }
 
 int iommufd_backend_unmap_dma(IOMMUFDBackend *be, uint32_t ioas,
@@ -240,6 +240,145 @@ int iommufd_backend_copy_dma(IOMMUFDBackend *be, uint32_t src_ioas,
     if (ret) {
         error_report("IOMMU_IOAS_COPY failed: %s", strerror(errno));
     }
+    return !ret ? 0 : -errno;
+}
+
+int iommufd_backend_alloc_s1_hwpt(int iommufd, uint32_t dev_id,
+                          hwaddr s1_ptr, uint32_t s2_hwpt,
+                          int fd, union iommu_stage1_config *s1_config,
+                          uint32_t *out_s1_hwpt, int *out_fault_fd)
+{
+    int ret;
+    struct iommu_hwpt_s1_data s1_data = {
+	.stage2_hwpt_id = s2_hwpt,
+        .stage1_config_len = sizeof(*s1_config),
+        .stage1_config_uptr = (uint64_t)s1_config,
+        .stage1_ptr = s1_ptr,
+        .eventfd = fd,
+    };
+    struct iommu_alloc_user_hwpt alloc_hwpt = {
+        .size = sizeof(struct iommu_alloc_user_hwpt),
+        .flags = 0,
+        .dev_id = dev_id,
+        .hwpt_type = IOMMU_USER_HWPT_S1,
+        .data_len = sizeof(s1_data),
+        .reserved = 0,
+        .data_uptr = (uint64_t)&s1_data,
+    };
+
+    ret = ioctl(iommufd, IOMMU_ALLOC_USER_HWPT, &alloc_hwpt);
+    trace_iommufd_backend_alloc_s1_hwpt(iommufd, dev_id, s1_ptr,
+                                s2_hwpt, fd, (uint64_t)s1_config, ret);
+    if (ret) {
+        error_report("IOMMU_ALLOC_USER_HWPT s1 failed: %s", strerror(errno));
+    } else {
+        *out_fault_fd = s1_data.out_fault_fd;
+        *out_s1_hwpt = alloc_hwpt.out_hwpt_id;
+    }
+    return !ret ? 0 : -errno;
+}
+
+int iommufd_backend_alloc_s2_hwpt(int iommufd, uint32_t dev_id,
+                                  uint32_t ioas, uint32_t *out_s2_hwpt)
+{
+    int ret;
+    struct iommu_alloc_user_hwpt alloc_hwpt = {
+        .size = sizeof(struct iommu_alloc_user_hwpt),
+        .flags = 0,
+        .dev_id = dev_id,
+        .hwpt_type = IOMMU_USER_HWPT_S2,
+        .data_len = sizeof(ioas),
+        .reserved = 0,
+        .data_uptr = (uint64_t)&ioas,
+    };
+
+    ret = ioctl(iommufd, IOMMU_ALLOC_USER_HWPT, &alloc_hwpt);
+    trace_iommufd_backend_alloc_s2_hwpt(iommufd, dev_id, ioas, ret);
+    if (ret) {
+        error_report("IOMMU_ALLOC_USER_HWPT s2 failed: %s", strerror(errno));
+    } else {
+        *out_s2_hwpt = alloc_hwpt.out_hwpt_id;
+    }
+    return !ret ? 0 : -errno;
+}
+
+int iommufd_backend_alloc_pasid(int iommufd, uint32_t min, uint32_t max,
+                        bool identical, uint32_t *pasid)
+{
+    int ret;
+    uint32_t upasid = *pasid;
+    struct iommu_alloc_pasid alloc = {
+        .size = sizeof(alloc),
+        .flags = identical ? IOMMU_ALLOC_PASID_IDENTICAL : 0,
+        .range.min = min,
+        .range.max = max,
+        .pasid = upasid,
+    };
+
+    ret = ioctl(iommufd, IOMMU_ALLOC_PASID, &alloc);
+    if (ret) {
+        error_report("IOMMU_ALLOC_PASID failed: %s", strerror(errno));
+    } else {
+        *pasid = alloc.pasid;
+    }
+    trace_iommufd_backend_alloc_pasid(iommufd, min, max,
+                              identical, upasid, *pasid, ret);
+    return !ret ? 0 : -errno;
+}
+
+int iommufd_backend_free_pasid(int iommufd, uint32_t pasid)
+{
+    int ret;
+    struct iommu_free_pasid free = {
+        .size = sizeof(free),
+        .flags = 0,
+        .pasid = pasid,
+    };
+
+    ret = ioctl(iommufd, IOMMU_FREE_PASID, &free);
+    if (ret) {
+        error_report("IOMMU_FREE_PASID failed: %s", strerror(errno));
+    }
+    trace_iommufd_backend_free_pasid(iommufd, pasid, ret);
+    return !ret ? 0 : -errno;
+}
+
+int iommufd_backend_invalidate_cache(int iommufd, uint32_t hwpt_id,
+                             struct iommu_cache_invalidate_info *info)
+{
+    int ret;
+    struct iommu_hwpt_invalidate_s1_cache cache = {
+        .size = sizeof(cache),
+        .flags = 0,
+        .hwpt_id = hwpt_id,
+        .info = *info,
+    };
+
+    ret = ioctl(iommufd, IOMMU_HWPT_INVAL_S1_CACHE, &cache);
+    if (ret) {
+        error_report("IOMMU_HWPT_INVAL_S1_CACHE failed: %s", strerror(errno));
+    }
+    trace_iommufd_backend_invalidate_cache(iommufd, hwpt_id, ret);
+    return !ret ? 0 : -errno;
+}
+
+int iommufd_backend_page_response(int iommufd, uint32_t hwpt_id,
+                          uint32_t dev_id, struct iommu_page_response *resp)
+{
+    int ret;
+    struct iommu_hwpt_page_response page = {
+        .size = sizeof(page),
+        .flags = 0,
+        .hwpt_id = hwpt_id,
+        .dev_id = dev_id,
+        .resp = *resp,
+    };
+
+    ret = ioctl(iommufd, IOMMU_PAGE_RESPONSE, &page);
+    if (ret) {
+        error_report("IOMMU_PAGE_RESPONSE failed: %s", strerror(errno));
+    }
+    trace_iommufd_backend_page_response(iommufd, hwpt_id, dev_id, ret);
     return !ret ? 0 : -errno;
 }
 
