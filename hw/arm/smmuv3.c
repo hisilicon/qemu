@@ -935,9 +935,96 @@ static void smmuv3_s1_range_inval(SMMUState *s, Cmd *cmd)
     }
 }
 
+static int smmuv3_report_iommu_fault(SMMUHwpt *hwpt, int count,
+                                  struct iommu_fault *buf)
+{
+    struct iommu_fault *fault = buf;
+    SMMUDevice *sdev = container_of(hwpt, SMMUDevice, hwpt);
+    SMMUv3State *s3 = sdev->smmu;
+    uint32_t sid = smmu_get_sid(sdev);
+    SMMUEventInfo info = {0};
+    struct iommu_fault_page_request *prm;
+
+    info.sid = sid;
+    switch (fault->type) {
+    case IOMMU_FAULT_PAGE_REQ:
+
+        prm = &fault->prm;
+        info.type = SMMU_EVT_F_TRANSLATION;
+        info.u.f_translation.addr = prm->addr;
+        info.u.f_translation.stall = true;
+        info.u.f_translation.ssid = prm->pasid;
+        info.u.f_translation.stag = prm->grpid;
+
+        if (prm->flags | IOMMU_FAULT_PAGE_REQUEST_PASID_VALID) {
+            info.u.f_translation.ssv = true;
+        }
+        if (prm->perm & IOMMU_FAULT_PERM_READ) {
+            info.u.f_translation.rnw = true;
+        }
+        if (prm->perm & IOMMU_FAULT_PERM_PRIV) {
+            info.u.f_translation.pnu = true;
+        }
+        if (prm->perm & IOMMU_FAULT_PERM_EXEC) {
+            info.u.f_translation.ind = true;
+        }
+
+        smmuv3_record_event(s3, &info);
+        break;
+    default:
+        printf("%s, (ToDo)Unsupported event type %d", __func__, fault->type);
+        return -ENOENT;
+    }
+
+    return 0;
+}
+
 static void smmuv3_dma_fault_notifier_handler(void *opaque)
 {
+    SMMUHwpt *hwpt = opaque;
 
+    struct iommufd_stage1_dma_fault header;
+    struct iommu_fault *queue = NULL;
+    char *queue_buffer = NULL;
+    ssize_t bytes;
+
+    if (!event_notifier_test_and_clear(&hwpt->notifier)) {
+        return;
+    }
+
+    bytes = pread(hwpt->fault_fd, &header, sizeof(header), 0);
+    if (bytes != sizeof(header)) {
+        error_report("%s unable to read the fault region header (0x%lx)",
+                     __func__, bytes);
+        return;
+    }
+
+    if (!queue) {
+        size_t queue_size = header.nb_entries * header.entry_size;
+
+        queue_buffer = g_malloc(queue_size);
+        bytes =  pread(hwpt->fault_fd, queue_buffer, queue_size, header.offset);
+        if (bytes != queue_size) {
+            error_report("%s unable to read the fault queue (0x%lx)",
+                         __func__, bytes);
+            return;
+        }
+
+        queue = (struct iommu_fault *)queue_buffer;
+    }
+
+    while (hwpt->fault_tail_index != header.head) {
+        smmuv3_report_iommu_fault(hwpt, 1,
+                               &queue[hwpt->fault_tail_index]);
+        hwpt->fault_tail_index =
+            (hwpt->fault_tail_index + 1) % header.nb_entries;
+    }
+    bytes = pwrite(hwpt->fault_fd, &hwpt->fault_tail_index, 4, 0);
+    if (bytes != 4) {
+        error_report("%s unable to write the fault region tail index (0x%lx)",
+                     __func__, bytes);
+    }
+    g_free(queue_buffer);
 }
 
 static void smmuv3_destroy_hwpt(SMMUHwpt *hwpt)
@@ -1066,6 +1153,31 @@ static void smmuv3_s1_asid_inval(SMMUState *s, uint16_t asid)
         }
     }
     smmu_iotlb_inv_asid(s, asid);
+}
+
+static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
+                                       uint32_t stag, uint32_t code)
+{
+    IOMMUMemoryRegion *mr = smmu_iommu_mr(bs, sid);
+    struct iommu_page_response page_resp = {0};
+    SMMUDevice *sdev;
+    SMMUHwpt *hwpt;
+    IOMMUFDDevice *idev;
+
+    if (!mr) {
+        return;
+    }
+
+    sdev = container_of(mr, SMMUDevice, iommu);
+    hwpt = &sdev->hwpt;
+    idev = sdev->idev;
+
+    page_resp.argsz = sizeof(struct iommu_page_response);
+    page_resp.version = IOMMU_PAGE_RESP_VERSION_1;
+    page_resp.grpid = stag;
+    page_resp.code = code;
+
+    iommufd_page_response(hwpt->iommufd, hwpt->hwpt_id, idev->dev_id, &page_resp);
 }
 
 static int smmuv3_cmdq_consume(SMMUv3State *s)
@@ -1198,10 +1310,22 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_TLBI_S2_IPA:
         case SMMU_CMD_ATC_INV:
         case SMMU_CMD_PRI_RESP:
-        case SMMU_CMD_RESUME:
         case SMMU_CMD_STALL_TERM:
             trace_smmuv3_unhandled_cmd(type);
             break;
+        case SMMU_CMD_RESUME:
+        {
+            uint32_t sid = CMD_SID(&cmd);
+            uint16_t stag = CMD_RESUME_STAG(&cmd);
+            uint8_t action = CMD_RESUME_AC(&cmd);
+            uint32_t code = IOMMU_PAGE_RESP_INVALID;
+
+            if (action) {
+                code = IOMMU_PAGE_RESP_SUCCESS;
+            }
+            smmuv3_notify_stall_resume(bs, sid, stag, code);
+            break;
+        }
         default:
             cmd_error = SMMU_CERROR_ILL;
             qemu_log_mask(LOG_GUEST_ERROR,
