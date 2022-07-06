@@ -74,8 +74,11 @@ typedef struct SMMUTransCfg {
     uint64_t ttb;              /* TT base address */
     uint8_t oas;               /* output address width */
     uint8_t tbi;               /* Top Byte Ignore */
+    uint8_t s1fmt;
+    uint8_t s1dss;
     uint16_t asid;
     SMMUTransTableInfo tt[2];
+    uint16_t s1cdmax;
     dma_addr_t s1ctxptr;
     uint32_t iotlb_hits;       /* counts IOTLB hits for this asid */
     uint32_t iotlb_misses;     /* counts IOTLB misses for this asid */
