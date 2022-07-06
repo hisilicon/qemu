@@ -89,6 +89,7 @@ typedef struct SMMUDevice {
     AddressSpace       as;
     uint32_t           cfg_cache_hits;
     uint32_t           cfg_cache_misses;
+    IOMMUFDDevice      *idev;
     QLIST_ENTRY(SMMUDevice) next;
 } SMMUDevice;
 
