@@ -84,6 +84,15 @@ typedef struct SMMUTransCfg {
     uint32_t iotlb_misses;     /* counts IOTLB misses for this asid */
 } SMMUTransCfg;
 
+typedef struct SMMUHwpt {
+    uint32_t hwpt_id;
+    int iommufd;
+    int eventfd;
+    EventNotifier notifier;
+    int fault_fd;
+    uint32_t fault_tail_index;
+} SMMUHwpt;
+
 typedef struct SMMUDevice {
     void               *smmu;
     PCIBus             *bus;
@@ -92,6 +101,7 @@ typedef struct SMMUDevice {
     AddressSpace       as;
     uint32_t           cfg_cache_hits;
     uint32_t           cfg_cache_misses;
+    SMMUHwpt           hwpt;
     IOMMUFDDevice      *idev;
     QLIST_ENTRY(SMMUDevice) next;
 } SMMUDevice;
