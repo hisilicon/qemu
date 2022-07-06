@@ -791,6 +791,39 @@ epilogue:
     return entry;
 }
 
+static void smmu_iommu_cache_invalidate_addr(SMMUDevice *sdev,
+                                             IOMMUTLBEvent *event)
+{
+    struct iommu_cache_invalidate_info *cache_info;
+    struct iommu_inv_addr_info *addr_info;
+    SMMUHwpt *hwpt = &sdev->hwpt;
+
+    cache_info = g_malloc0(sizeof(*cache_info));
+
+    cache_info->version = IOMMU_CACHE_INVALIDATE_INFO_VERSION_1;
+    cache_info->cache = IOMMU_CACHE_INV_TYPE_IOTLB;
+    cache_info->granularity = IOMMU_INV_GRANU_ADDR;
+
+    addr_info = &cache_info->granu.addr_info;
+    addr_info->archid = event->entry.arch_id ;
+    addr_info->flags |= IOMMU_INV_ADDR_FLAGS_LEAF | IOMMU_INV_ADDR_FLAGS_ARCHID;
+    addr_info->addr = event->entry.iova;
+    if (event->entry.flags & IOMMU_INV_FLAGS_GRANULE) {
+        size_t size = event->entry.addr_mask + 1;
+        uint8_t granule = event->entry.granule;
+
+        addr_info->granule_size = 1ULL << granule;
+        addr_info->nb_granules = size >> granule;
+    } else {
+        g_free(cache_info);
+        return;
+    }
+
+    if (iommufd_invalidate_cache(hwpt->iommufd, hwpt->hwpt_id, cache_info)) {
+        error_report("Cache flush failed");
+    }
+    g_free(cache_info);
+}
 /**
  * smmuv3_notify_iova - call the notifier @n for a given
  * @asid and @iova tuple.
@@ -845,7 +878,32 @@ static void smmuv3_notify_iova(IOMMUMemoryRegion *mr,
     event.entry.leaf = leaf;
 
     memory_region_notify_iommu_one(n, &event);
+    smmu_iommu_cache_invalidate_addr(sdev, &event);
 }
+
+static void smmu_iommu_cache_invalidate_asid(SMMUDevice *sdev, int asid)
+{
+    struct iommu_cache_invalidate_info *cache_info;
+    SMMUHwpt *hwpt = &sdev->hwpt;
+
+    if (hwpt->hwpt_id == 0) {
+            return;
+    }
+
+    cache_info = g_malloc0(sizeof(*cache_info));
+
+    cache_info->version = IOMMU_CACHE_INVALIDATE_INFO_VERSION_1;
+    cache_info->cache = IOMMU_CACHE_INV_TYPE_IOTLB;
+    cache_info->granularity = IOMMU_INV_GRANU_PASID;
+    cache_info->granu.pasid_info.archid = asid;
+
+    if (iommufd_invalidate_cache(hwpt->iommufd, hwpt->hwpt_id, cache_info)) {
+        error_report("Cache flush failed");
+    }
+
+    g_free(cache_info);
+}
+
 
 /**
  * smmuv3_notify_asid - call the notifier @n for a given asid
@@ -858,6 +916,7 @@ static void smmuv3_notify_asid(IOMMUMemoryRegion *mr,
                                IOMMUNotifier *n, int asid)
 {
     IOMMUTLBEvent event = {};
+    SMMUDevice *sdev = container_of(mr, SMMUDevice, iommu);
 
     event.type = IOMMU_NOTIFIER_UNMAP;
     event.entry.target_as = &address_space_memory;
@@ -869,6 +928,8 @@ static void smmuv3_notify_asid(IOMMUMemoryRegion *mr,
     event.entry.addr_mask = n->end - n->start;
 
     memory_region_notify_iommu_one(n, &event);
+    smmu_iommu_cache_invalidate_asid(sdev, asid);
+
 }
 
 
