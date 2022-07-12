@@ -240,6 +240,7 @@ struct vfio_info_cap_header *
 vfio_get_cap(void *ptr, uint32_t cap_offset, uint16_t id);
 #endif
 extern const MemoryListener vfio_prereg_listener;
+extern const MemoryListener vfio_nested_prereg_listener;
 
 int vfio_spapr_create_window(VFIOLegacyContainer *container,
                              MemoryRegionSection *section,

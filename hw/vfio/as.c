@@ -823,6 +823,35 @@ static void vfio_dma_unmap_ram_section(VFIOContainer *container,
     }
 }
 
+static void vfio_prereg_listener_region_add(MemoryListener *listener,
+                                            MemoryRegionSection *section)
+{
+    VFIOContainer *container =
+        container_of(listener, VFIOContainer, prereg_listener);
+    Error *err = NULL;
+
+    if (!memory_region_is_ram(section->mr)) {
+        return;
+    }
+
+    vfio_dma_map_ram_section(container, NULL, section, &err);
+    if (err) {
+        error_report_err(err);
+    }
+}
+static void vfio_prereg_listener_region_del(MemoryListener *listener,
+                                     MemoryRegionSection *section)
+{
+    VFIOContainer *container =
+        container_of(listener, VFIOContainer, prereg_listener);
+
+    if (!memory_region_is_ram(section->mr)) {
+        return;
+    }
+
+    vfio_dma_unmap_ram_section(container, section);
+}
+
 static void vfio_container_region_add(VFIOContainer *container,
                                       VFIOContainer **src_container,
                                       MemoryRegionSection *section)
@@ -883,11 +912,6 @@ static void vfio_container_region_add(VFIOContainer *container,
         llend = int128_sub(llend, int128_one());
         iommu_idx = memory_region_iommu_attrs_to_index(iommu_mr,
                                                        MEMTXATTRS_UNSPECIFIED);
-        iommu_notifier_init(&giommu->n, vfio_iommu_map_notify,
-                            IOMMU_NOTIFIER_IOTLB_EVENTS,
-                            section->offset_within_region,
-                            int128_get64(llend),
-                            iommu_idx);
 
         ret = memory_region_iommu_set_page_size_mask(giommu->iommu_mr,
                                                      container->pgsizes,
@@ -897,14 +921,21 @@ static void vfio_container_region_add(VFIOContainer *container,
             goto fail;
         }
 
-        ret = memory_region_register_iommu_notifier(section->mr, &giommu->n,
-                                                    &err);
-        if (ret) {
-            g_free(giommu);
-            goto fail;
+        if (!container->nested) {
+            iommu_notifier_init(&giommu->n, vfio_iommu_map_notify,
+                                IOMMU_NOTIFIER_IOTLB_EVENTS,
+                                section->offset_within_region,
+                                int128_get64(llend),
+                                iommu_idx);
+            ret = memory_region_register_iommu_notifier(section->mr, &giommu->n,
+                                                        &err);
+            if (ret) {
+                g_free(giommu);
+                goto fail;
+            }
+            memory_region_iommu_replay(giommu->iommu_mr, &giommu->n);
         }
         QLIST_INSERT_HEAD(&container->giommu_list, giommu, giommu_next);
-        memory_region_iommu_replay(giommu->iommu_mr, &giommu->n);
 
         return;
     }
@@ -1490,6 +1521,11 @@ static const MemoryListener vfio_memory_listener = {
     .log_global_start = vfio_listener_log_global_start,
     .log_global_stop = vfio_listener_log_global_stop,
     .log_sync = vfio_listener_log_sync,
+};
+
+const MemoryListener vfio_nested_prereg_listener = {
+    .region_add = vfio_prereg_listener_region_add,
+    .region_del = vfio_prereg_listener_region_del,
 };
 
 void vfio_reset_handler(void *opaque)
