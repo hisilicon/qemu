@@ -39,6 +39,9 @@
 #include "hw/intc/arm_gicv3_common.h"
 #include "qom/object.h"
 
+#define TYPE_IOMMUFD_BACKEND "iommufd"
+struct IOMMUFDBackend;
+
 #define NUM_GICV2M_SPIS       64
 #define NUM_VIRTIO_TRANSPORTS 32
 #define NUM_SMMU_IRQS          4
@@ -156,6 +159,7 @@ struct VirtMachineState {
     bool dtb_randomness;
     OnOffAuto acpi;
     VirtGICType gic_version;
+    struct IOMMUFDBackend *iommufd;
     VirtIOMMUType iommu;
     bool default_bus_bypass_iommu;
     VirtMSIControllerType msi_controller;
