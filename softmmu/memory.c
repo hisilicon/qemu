@@ -2122,6 +2122,15 @@ void ram_discard_manager_unregister_listener(RamDiscardManager *rdm,
     rdmc->unregister_listener(rdm, rdl);
 }
 
+int memory_region_invalidate_cache(IOMMUMemoryRegion *iommu_mr, void *cache_info)
+{
+    IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_GET_CLASS(iommu_mr);
+    if (!imrc->invalidate_cache) {
+        return -ENOENT;
+    }
+    return imrc->invalidate_cache(iommu_mr, cache_info);
+}
+
 /* Called with rcu_read_lock held.  */
 bool memory_get_xlat_addr(IOMMUTLBEntry *iotlb, void **vaddr,
                           ram_addr_t *ram_addr, bool *read_only,
