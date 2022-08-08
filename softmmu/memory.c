@@ -2193,6 +2193,15 @@ bool memory_get_xlat_addr(IOMMUTLBEntry *iotlb, void **vaddr,
     return true;
 }
 
+int memory_region_invalidate_cache(IOMMUMemoryRegion *iommu_mr, void *cache_info)
+{
+    IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_GET_CLASS(iommu_mr);
+    if (!imrc->invalidate_cache) {
+        return -ENOENT;
+    }
+    return imrc->invalidate_cache(iommu_mr, cache_info);
+}
+
 void memory_region_set_log(MemoryRegion *mr, bool log, unsigned client)
 {
     uint8_t mask = 1 << client;
