@@ -1585,14 +1585,6 @@ static int smmuv3_notify_flag_changed(IOMMUMemoryRegion *iommu,
         return -EINVAL;
     }
 
-    if (new & IOMMU_NOTIFIER_MAP) {
-        error_setg(errp,
-                   "device %02x.%02x.%x requires iommu MAP notifier which is "
-                   "not currently supported", pci_bus_num(sdev->bus),
-                   PCI_SLOT(sdev->devfn), PCI_FUNC(sdev->devfn));
-        return -EINVAL;
-    }
-
     if (old == IOMMU_NOTIFIER_NONE) {
         trace_smmuv3_notify_flag_add(iommu->parent_obj.name);
         QLIST_INSERT_HEAD(&s->devices_with_notifiers, sdev, next);
@@ -1637,6 +1629,14 @@ static int smmuv3_get_attr(IOMMUMemoryRegion *iommu,
     return -EINVAL;
 }
 
+static int smmuv3_invalidate_cache(IOMMUMemoryRegion *iommu, void *cache_info)
+{
+    SMMUDevice *sdev = container_of(iommu, SMMUDevice, iommu);
+    IOMMUTLBEntry *iotlb = (IOMMUTLBEntry *)cache_info;
+
+    return smmu_iommu_invalidate_cache(sdev, iotlb->data_type, iotlb->data_len, iotlb->data);
+}
+
 static void smmuv3_iommu_memory_region_class_init(ObjectClass *klass,
                                                   void *data)
 {
@@ -1645,6 +1645,7 @@ static void smmuv3_iommu_memory_region_class_init(ObjectClass *klass,
     imrc->translate = smmuv3_translate;
     imrc->notify_flag_changed = smmuv3_notify_flag_changed;
     imrc->get_attr = smmuv3_get_attr;
+    imrc->invalidate_cache = smmuv3_invalidate_cache;
 }
 
 static const TypeInfo smmuv3_type_info = {
