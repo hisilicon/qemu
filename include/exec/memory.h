@@ -498,6 +498,7 @@ struct IOMMUMemoryRegionClass {
      int (*iommu_set_page_size_mask)(IOMMUMemoryRegion *iommu,
                                      uint64_t page_size_mask,
                                      Error **errp);
+    int (*invalidate_cache)(IOMMUMemoryRegion *iommu, void *cache_info);
 };
 
 typedef struct RamDiscardListener RamDiscardListener;
@@ -1795,6 +1796,8 @@ int memory_region_iommu_num_indexes(IOMMUMemoryRegion *iommu_mr);
 int memory_region_iommu_set_page_size_mask(IOMMUMemoryRegion *iommu_mr,
                                            uint64_t page_size_mask,
                                            Error **errp);
+
+int memory_region_invalidate_cache(IOMMUMemoryRegion *iommu_mr, void *cache_info);
 
 /**
  * memory_region_name: get a memory region's name
