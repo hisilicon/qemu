@@ -39,8 +39,10 @@ static void *vfio_prereg_gpa_to_vaddr(MemoryRegionSection *section, hwaddr gpa)
 static void vfio_prereg_listener_region_add(MemoryListener *listener,
                                             MemoryRegionSection *section)
 {
-    VFIOLegacyContainer *container = container_of(listener, VFIOLegacyContainer,
-                                                  prereg_listener);
+    VFIOContainer *bcontainer = container_of(listener, VFIOContainer,
+                                            prereg_listener);
+    VFIOLegacyContainer *container = container_of(bcontainer, VFIOLegacyContainer,
+                                                  bcontainer);
     const hwaddr gpa = section->offset_within_address_space;
     hwaddr end;
     int ret;
@@ -97,8 +99,10 @@ static void vfio_prereg_listener_region_add(MemoryListener *listener,
 static void vfio_prereg_listener_region_del(MemoryListener *listener,
                                             MemoryRegionSection *section)
 {
-    VFIOLegacyContainer *container = container_of(listener, VFIOLegacyContainer,
-                                                  prereg_listener);
+    VFIOContainer *bcontainer = container_of(listener, VFIOContainer,
+                                            prereg_listener);
+    VFIOLegacyContainer *container = container_of(bcontainer, VFIOLegacyContainer,
+                                                  bcontainer);
     const hwaddr gpa = section->offset_within_address_space;
     hwaddr end;
     int ret;

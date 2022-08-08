@@ -105,6 +105,7 @@ typedef struct VFIOContainerOps {
  */
 struct VFIOContainer {
     const VFIOContainerOps *ops;
+    MemoryListener prereg_listener;
     VFIOAddressSpace *space;
     Error *error;
     bool nested;
