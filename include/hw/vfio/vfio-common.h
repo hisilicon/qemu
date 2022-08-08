@@ -80,7 +80,6 @@ struct VFIOGroup;
 typedef struct VFIOLegacyContainer {
     VFIOContainer bcontainer;
     int fd; /* /dev/vfio/vfio, empowered by the attached groups */
-    MemoryListener prereg_listener;
     unsigned iommu_type;
     QLIST_HEAD(, VFIOGroup) group_list;
 } VFIOLegacyContainer;

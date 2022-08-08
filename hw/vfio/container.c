@@ -351,8 +351,10 @@ err_out:
 
 static void vfio_listener_release(VFIOLegacyContainer *container)
 {
+    VFIOContainer *bcontainer = &container->bcontainer;
+
     if (container->iommu_type == VFIO_SPAPR_TCE_v2_IOMMU) {
-        memory_listener_unregister(&container->prereg_listener);
+        memory_listener_unregister(&bcontainer->prereg_listener);
     }
 }
 
@@ -829,12 +831,12 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
                 goto enable_discards_exit;
             }
         } else {
-            container->prereg_listener = vfio_prereg_listener;
+            bcontainer->prereg_listener = vfio_prereg_listener;
 
-            memory_listener_register(&container->prereg_listener,
+            memory_listener_register(&bcontainer->prereg_listener,
                                      &address_space_memory);
             if (bcontainer->error) {
-                memory_listener_unregister(&container->prereg_listener);
+                memory_listener_unregister(&bcontainer->prereg_listener);
                 ret = -1;
                 error_propagate_prepend(errp, bcontainer->error,
                     "RAM memory listener initialization failed: ");
@@ -849,7 +851,7 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
                              "VFIO_IOMMU_SPAPR_TCE_GET_INFO failed");
             ret = -errno;
             if (v2) {
-                memory_listener_unregister(&container->prereg_listener);
+                memory_listener_unregister(&bcontainer->prereg_listener);
             }
             goto enable_discards_exit;
         }
