@@ -77,6 +77,7 @@ typedef struct VFIOIOMMUBackendOpsClass VFIOIOMMUBackendOpsClass;
  */
 struct VFIOContainer {
     VFIOIOMMUBackendOpsClass *ops;
+    MemoryListener prereg_listener;
     VFIOAddressSpace *space;
     Error *error;
     bool nested;
