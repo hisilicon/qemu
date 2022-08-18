@@ -277,6 +277,7 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
         .pt_id = container->ioas_id,
     };
     VFIOIOASHwpt *hwpt;
+    uint32_t hwpt_id;
     int ret;
 
     /*
@@ -299,6 +300,18 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
     trace_vfio_iommufd_bind_device(bind.iommufd, vbasedev->name,
                                    vbasedev->fd, vbasedev->devid);
 
+    /* Allocate and attach device to a default hwpt */
+    ret = iommufd_backend_alloc_hwpt(bind.iommufd, vbasedev->devid,
+                                     container->ioas_id,
+                                     container->nested_data.type,
+                                     container->nested_data.len,
+                                     container->nested_data.ptr, &hwpt_id);
+    if (ret) {
+        error_setg_errno(errp, errno, "error alloc nested S2 hwpt");
+        return ret;
+    }
+
+    attach_data.pt_id = hwpt_id;
     /* Attach device to an ioas within iommufd */
     ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach_data);
     if (ret) {
@@ -307,14 +320,17 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
                          "[iommufd=%d] error attach %s (%d) to ioasid=%d",
                          container->be->fd, vbasedev->name, vbasedev->fd,
                          attach_data.pt_id);
-        return ret;
-
     }
+
     trace_vfio_iommufd_attach_device(bind.iommufd, vbasedev->name,
                                      vbasedev->fd, container->ioas_id,
                                      attach_data.pt_id);
 
     hwpt = vfio_container_get_hwpt(container, attach_data.pt_id);
+    if (!hwpt) {
+        __vfio_device_detach_container(vbasedev, container, errp);
+        return -1;
+    }
 
     QLIST_INSERT_HEAD(&hwpt->device_list, vbasedev, hwpt_next);
     return 0;
@@ -380,6 +396,7 @@ static int iommufd_attach_device(VFIODevice *vbasedev, AddressSpace *as,
     VFIOAddressSpace *space;
     IOMMUFDDevice *idev = &vbasedev->idev;
     struct vfio_device_info dev_info = { .argsz = sizeof(dev_info) };
+    VFIOIOASHwpt *hwpt;
     int ret, devfd;
     uint32_t ioas_id;
     Error *err = NULL;
@@ -449,7 +466,7 @@ static int iommufd_attach_device(VFIODevice *vbasedev, AddressSpace *as,
         ret = memory_region_iommu_get_attr(iommu_mr, IOMMU_ATTR_IOMMUFD_DATA,
                                            (void *)&container->nested_data);
         if (ret) {
-            container->nested_data.type = IOMMU_DEVICE_DATA_NONE;
+            container->nested_data.type = IOMMU_HWPT_TYPE_DEFAULT;
             container->nested_data.len = 0;
             container->nested_data.ptr = NULL;
         }
@@ -517,8 +534,10 @@ out:
     vbasedev->flags = dev_info.flags;
     vbasedev->reset_works = !!(dev_info.flags & VFIO_DEVICE_FLAGS_RESET);
 
+    hwpt = vfio_find_hwpt_for_dev(container, vbasedev);
     iommufd_device_init(idev, sizeof(*idev), TYPE_VFIO_IOMMU_DEVICE,
-                       container->be->fd, vbasedev->devid, ioas_id);
+                        container->be->fd, vbasedev->devid, ioas_id,
+                        hwpt->hwpt_id);
     trace_vfio_iommufd_device_info(vbasedev->name, devfd, vbasedev->num_irqs,
                                    vbasedev->num_regions, vbasedev->flags);
     return 0;
