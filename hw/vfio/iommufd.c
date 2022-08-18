@@ -389,6 +389,7 @@ static int iommufd_attach_device(VFIODevice *vbasedev, AddressSpace *as,
     IOMMUFDDevice *idev = &vbasedev->idev;
     Error *err = NULL;
     struct vfio_device_info dev_info = { .argsz = sizeof(dev_info) };
+    VFIOIOASHwpt *hwpt;
     int ret, devfd;
     uint32_t ioas_id;
 
@@ -525,8 +526,10 @@ out:
     vbasedev->flags = dev_info.flags;
     vbasedev->reset_works = !!(dev_info.flags & VFIO_DEVICE_FLAGS_RESET);
 
+    hwpt = vfio_find_hwpt_for_dev(container, vbasedev);
     iommufd_device_init(idev, sizeof(*idev), TYPE_VFIO_IOMMU_DEVICE,
-                       container->be->fd, vbasedev->devid, ioas_id);
+                        container->be->fd, vbasedev->devid, ioas_id,
+                        hwpt->hwpt_id);
     trace_vfio_iommufd_device_info(vbasedev->name, devfd, vbasedev->num_irqs,
                                    vbasedev->num_regions, vbasedev->flags);
     return 0;
