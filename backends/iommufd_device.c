@@ -27,8 +27,7 @@
 #include <sys/ioctl.h>
 #include "qemu/error-report.h"
 
-int iommufd_device_attach_hwpt(IOMMUFDDevice *idev, uint32_t *pasid,
-                               uint32_t hwpt_id)
+int iommufd_device_attach_hwpt(IOMMUFDDevice *idev, uint32_t hwpt_id)
 {
     IOMMUFDDeviceClass *idevc;
 
@@ -38,10 +37,10 @@ int iommufd_device_attach_hwpt(IOMMUFDDevice *idev, uint32_t *pasid,
         return -EINVAL;
     }
 
-    return idevc->attach_hwpt(idev, pasid, hwpt_id);
+    return idevc->attach_hwpt(idev, hwpt_id);
 }
 
-int iommufd_device_detach_hwpt(IOMMUFDDevice *idev, uint32_t *pasid)
+int iommufd_device_detach_hwpt(IOMMUFDDevice *idev)
 {
     IOMMUFDDeviceClass *idevc;
 
@@ -51,20 +50,20 @@ int iommufd_device_detach_hwpt(IOMMUFDDevice *idev, uint32_t *pasid)
         return -EINVAL;
     }
 
-    return idevc->detach_hwpt(idev, pasid);
+    return idevc->detach_hwpt(idev);
 }
 
 int iommufd_device_get_info(IOMMUFDDevice *idev,
-                          enum iommu_hw_type *type,
-                          uint32_t len, void *data)
+                            enum iommu_device_data_type *type,
+                            uint32_t len, void *data)
 {
     struct iommu_device_info info = {
         .size = sizeof(info),
         .flags = 0,
         .dev_id = idev->dev_id,
-        .reserved = 0,
-        .hw_data_len = len,
-        .hw_data_ptr = (uint64_t)data,
+        .__reserved = 0,
+        .out_data_len = len,
+        .out_data_ptr = (uint64_t)data,
     };
     int ret;
 
@@ -72,7 +71,7 @@ int iommufd_device_get_info(IOMMUFDDevice *idev,
     if (ret) {
         error_report("Failed to get info %m");
     } else {
-        *type = info.iommu_hw_type;
+        *type = info.out_device_type;
     }
 
     return ret;
