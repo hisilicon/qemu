@@ -95,6 +95,7 @@ typedef struct IOMMUFDBackend IOMMUFDBackend;
 
 typedef struct VFIOIOMMUFDContainer {
     VFIOContainer bcontainer;
+    IOMMUFDNestedData nested_data;
     IOMMUFDBackend *be;
     uint32_t ioas_id;
     QLIST_HEAD(, VFIOIOASHwpt) hwpt_list;
