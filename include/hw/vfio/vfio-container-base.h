@@ -85,6 +85,7 @@ struct VFIOContainer {
     VFIOIOMMUBackendOpsClass *ops;
     VFIOAddressSpace *space;
     Error *error;
+    bool nested;
     bool initialized;
     bool dirty_pages_supported;
     uint64_t dirty_pgsizes;
