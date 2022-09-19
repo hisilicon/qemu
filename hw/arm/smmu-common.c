@@ -636,41 +636,6 @@ IOMMUMemoryRegion *smmu_iommu_mr(SMMUState *s, uint32_t sid)
     return NULL;
 }
 
-/* Unmap the whole notifier's range */
-static void smmu_unmap_notifier_range(IOMMUNotifier *n)
-{
-    IOMMUTLBEvent event = {};
-
-    event.type = IOMMU_NOTIFIER_UNMAP;
-    event.entry.target_as = &address_space_memory;
-    event.entry.iova = n->start;
-    event.entry.perm = IOMMU_NONE;
-    event.entry.addr_mask = n->end - n->start;
-
-    memory_region_notify_iommu_one(n, &event);
-}
-
-/* Unmap all notifiers attached to @mr */
-inline void smmu_inv_notifiers_mr(IOMMUMemoryRegion *mr)
-{
-    IOMMUNotifier *n;
-
-    trace_smmu_inv_notifiers_mr(mr->parent_obj.name);
-    IOMMU_NOTIFIER_FOREACH(n, mr) {
-        smmu_unmap_notifier_range(n);
-    }
-}
-
-/* Unmap all notifiers of all mr's */
-void smmu_inv_notifiers_all(SMMUState *s)
-{
-    SMMUDevice *sdev;
-
-    QLIST_FOREACH(sdev, &s->devices_with_notifiers, next) {
-        smmu_inv_notifiers_mr(&sdev->iommu);
-    }
-}
-
 static void smmu_base_realize(DeviceState *dev, Error **errp)
 {
     SMMUState *s = ARM_SMMU(dev);

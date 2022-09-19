@@ -191,10 +191,4 @@ int smmu_iommu_invalidate_cache(SMMUDevice *sdev, uint32_t data_type,
 int smmu_iommu_get_info(SMMUDevice *sdev, uint32_t *data_type,
                         uint32_t data_len, void *data);
 
-/* Unmap the range of all the notifiers registered to any IOMMU mr */
-void smmu_inv_notifiers_all(SMMUState *s);
-
-/* Unmap the range of all the notifiers registered to @mr */
-void smmu_inv_notifiers_mr(IOMMUMemoryRegion *mr);
-
 #endif /* HW_ARM_SMMU_COMMON_H */

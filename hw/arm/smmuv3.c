@@ -979,6 +979,47 @@ static void smmuv3_s1_range_inval(SMMUState *s, Cmd *cmd)
     }
 }
 
+/* Unmap the whole notifier's range */
+static void smmu_unmap_notifier_range(IOMMUNotifier *n)
+{
+    struct iommu_hwpt_invalidate_arm_smmuv3 data = {
+        .opcode = SMMU_CMD_TLBI_NH_ALL,
+    };
+    IOMMUTLBEvent event = {};
+
+    event.type = IOMMU_NOTIFIER_UNMAP;
+    event.entry.target_as = &address_space_memory;
+    event.entry.iova = n->start;
+    event.entry.perm = IOMMU_NONE;
+    event.entry.addr_mask = n->end - n->start;
+    event.entry.data_type = IOMMU_HWPT_TYPE_ARM_SMMUV3;
+    event.entry.data_len = sizeof(data);
+    event.entry.data = &data;
+
+    memory_region_notify_iommu_one(n, &event);
+}
+
+/* Unmap all notifiers attached to @mr */
+static void smmu_inv_notifiers_mr(IOMMUMemoryRegion *mr)
+{
+    IOMMUNotifier *n;
+
+    trace_smmu_inv_notifiers_mr(mr->parent_obj.name);
+    IOMMU_NOTIFIER_FOREACH(n, mr) {
+        smmu_unmap_notifier_range(n);
+    }
+}
+
+/* Unmap all notifiers of all mr's */
+static void smmu_inv_notifiers_all(SMMUState *s)
+{
+    SMMUDevice *sdev;
+
+    QLIST_FOREACH(sdev, &s->devices_with_notifiers, next) {
+        smmu_inv_notifiers_mr(&sdev->iommu);
+    }
+}
+
 static gboolean
 smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
 {
