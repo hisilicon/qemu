@@ -629,6 +629,9 @@ IOMMUMemoryRegion *smmu_iommu_mr(SMMUState *s, uint32_t sid)
 /* Unmap the whole notifier's range */
 static void smmu_unmap_notifier_range(IOMMUNotifier *n)
 {
+    struct iommu_hwpt_invalidate_arm_smmuv3 data = {
+        .opcode = 0x30, //SMMU_CMD_TLBI_NSNH_ALL,
+    };
     IOMMUTLBEvent event = {};
 
     event.type = IOMMU_NOTIFIER_UNMAP;
@@ -636,6 +639,9 @@ static void smmu_unmap_notifier_range(IOMMUNotifier *n)
     event.entry.iova = n->start;
     event.entry.perm = IOMMU_NONE;
     event.entry.addr_mask = n->end - n->start;
+    event.entry.data_type = IOMMU_DEVICE_DATA_ARM_SMMUV3;
+    event.entry.data_len = sizeof(data);
+    event.entry.data = &data;
 
     memory_region_notify_iommu_one(n, &event);
 }
