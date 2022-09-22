@@ -608,6 +608,17 @@ int smmu_iommu_invalidate_cache(SMMUDevice *sdev, uint32_t data_type,
                                             data_type, data_len, data);
 }
 
+int smmu_iommu_get_info(SMMUDevice *sdev, uint32_t *data_type,
+                        uint32_t data_len, void *data)
+{
+    if (!sdev || !sdev->idev) {
+        return -ENOENT;
+    }
+
+    return iommufd_device_get_info(sdev->idev,
+                                   data_type, data_len, data);
+}
+
 IOMMUMemoryRegion *smmu_iommu_mr(SMMUState *s, uint32_t sid)
 {
     uint8_t bus_n, devfn;
