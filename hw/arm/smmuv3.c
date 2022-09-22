@@ -254,6 +254,80 @@ void smmuv3_record_event(SMMUv3State *s, SMMUEventInfo *info)
     info->recorded = true;
 }
 
+static void smmuv3_nested_init_regs(SMMUv3State *s)
+{
+    SMMUState *bs = ARM_SMMU(s);
+    SMMUDevice *sdev;
+    uint32_t data_type;
+    uint32_t val;
+    int ret;
+
+    if (!bs->nested || !bs->viommu) {
+        return;
+    }
+
+    sdev = QLIST_FIRST(&bs->viommu->device_list);
+    if (!sdev) {
+        return;
+    }
+
+    if (sdev->info.idr[0]) {
+        error_report("reusing the previous hw_info");
+        goto out;
+    }
+
+    ret = smmu_dev_get_info(sdev, &data_type, sizeof(sdev->info), &sdev->info);
+    if (ret) {
+        error_report("failed to get SMMU device info");
+        return;
+    }
+
+    if (data_type != IOMMU_HW_INFO_TYPE_ARM_SMMUV3) {
+        error_report( "Wrong data type (%d)!", data_type);
+        return;
+    }
+
+out:
+    trace_smmuv3_get_device_info(sdev->info.idr[0], sdev->info.idr[1],
+                                 sdev->info.idr[3], sdev->info.idr[5]);
+
+    val = FIELD_EX32(sdev->info.idr[0], IDR0, BTM);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, BTM, val);
+    val = FIELD_EX32(sdev->info.idr[0], IDR0, ATS);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, ATS, val);
+    val = FIELD_EX32(sdev->info.idr[0], IDR0, ASID16);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, ASID16, val);
+    val = FIELD_EX32(sdev->info.idr[0], IDR0, TERM_MODEL);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, TERM_MODEL, val);
+    val = FIELD_EX32(sdev->info.idr[0], IDR0, STALL_MODEL);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, STALL_MODEL, val);
+    val = FIELD_EX32(sdev->info.idr[0], IDR0, STLEVEL);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, STLEVEL, val);
+
+    val = FIELD_EX32(sdev->info.idr[1], IDR1, SIDSIZE);
+    s->idr[1] = FIELD_DP32(s->idr[1], IDR1, SIDSIZE, val);
+    val = FIELD_EX32(sdev->info.idr[1], IDR1, SSIDSIZE);
+    s->idr[1] = FIELD_DP32(s->idr[1], IDR1, SSIDSIZE, val);
+
+    val = FIELD_EX32(sdev->info.idr[3], IDR3, HAD);
+    s->idr[3] = FIELD_DP32(s->idr[3], IDR3, HAD, val);
+    val = FIELD_EX32(sdev->info.idr[3], IDR3, RIL);
+    s->idr[3] = FIELD_DP32(s->idr[3], IDR3, RIL, val);
+    val = FIELD_EX32(sdev->info.idr[3], IDR3, BBML);
+    s->idr[3] = FIELD_DP32(s->idr[3], IDR3, BBML, val);
+
+    val = FIELD_EX32(sdev->info.idr[5], IDR5, GRAN4K);
+    s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN4K, val);
+    val = FIELD_EX32(sdev->info.idr[5], IDR5, GRAN16K);
+    s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN16K, val);
+    val = FIELD_EX32(sdev->info.idr[5], IDR5, GRAN64K);
+    s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN64K, val);
+    val = FIELD_EX32(sdev->info.idr[5], IDR5, OAS);
+    s->idr[5] = FIELD_DP32(s->idr[5], IDR5, OAS, val);
+
+    /* FIXME check iidr and aidr registrs too */
+}
+
 static void smmuv3_init_regs(SMMUv3State *s)
 {
     /* Based on sys property, the stages supported in smmu will be advertised.*/
@@ -291,6 +365,9 @@ static void smmuv3_init_regs(SMMUv3State *s)
     s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN4K, 1);
     s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN16K, 1);
     s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN64K, 1);
+
+    /* Override IDR fields with HW caps */
+    smmuv3_nested_init_regs(s);
 
     s->cmdq.base = deposit64(s->cmdq.base, 0, 5, SMMU_CMDQS);
     s->cmdq.prod = 0;
