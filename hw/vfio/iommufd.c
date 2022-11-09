@@ -203,13 +203,14 @@ static VFIOIOASHwpt *vfio_find_hwpt_for_dev(VFIOIOMMUFDContainer *container,
 static int
 __vfio_device_detach_hwpt(VFIODevice *vbasedev, Error **errp)
 {
-    struct vfio_device_detach_hwpt detach_data = {
+    struct vfio_device_attach_iommufd_pt detach_data = {
         .argsz = sizeof(detach_data),
         .flags = 0,
+	.pt_id = 0,
     };
     int ret = 0;
 
-    ret = ioctl(vbasedev->fd, VFIO_DEVICE_DETACH_HWPT, &detach_data);
+    ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &detach_data);
     if (ret) {
         ret = -errno;
         error_setg_errno(errp, -ret, "detach %s from hwpt failed",
@@ -257,9 +258,8 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
         .iommufd = container->be->fd,
         .dev_cookie = (uint64_t)vbasedev,
     };
-    struct vfio_device_attach_hwpt attach = {
+    struct vfio_device_attach_iommufd_pt attach = {
         .argsz = sizeof(attach),
-        .iommufd = bind.iommufd,
     };
     VFIOIOASHwpt *hwpt;
     uint32_t hwpt_id;
@@ -288,8 +288,8 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
         return ret;
     }
 
-    attach.hwpt_id = hwpt_id;
-    ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_HWPT, &attach);
+    attach.pt_id = hwpt_id;
+    ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach);
     if (ret) {
         error_setg_errno(errp, errno, "error alloc nested S2 hwpt");
         return ret;
@@ -613,15 +613,14 @@ static int vfio_iommu_device_attach_hwpt(IOMMUFDDevice *idev,
                                          uint32_t hwpt_id)
 {
     VFIODevice *vbasedev = container_of(idev, VFIODevice, idev);
-    struct vfio_device_attach_hwpt attach = {
+    struct vfio_device_attach_iommufd_pt attach = {
         .argsz = sizeof(attach),
         .flags = 0,
-        .iommufd = idev->iommufd,
-        .hwpt_id = hwpt_id,
+        .pt_id = hwpt_id,
     };
     int ret;
 
-    ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_HWPT, &attach);
+    ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach);
     if (ret) {
         ret = -errno;
     }
