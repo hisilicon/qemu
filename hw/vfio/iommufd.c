@@ -200,6 +200,22 @@ static VFIOIOASHwpt *vfio_find_hwpt_for_dev(VFIOIOMMUFDContainer *container,
     return NULL;
 }
 
+static void vfio_kvm_device_add_device(VFIODevice *vbasedev)
+{
+    if (vfio_kvm_device_add_fd(vbasedev->fd)) {
+        error_report("Failed to add device %s to KVM VFIO device",
+                     vbasedev->sysfsdev);
+    }
+}
+
+static void vfio_kvm_device_del_device(VFIODevice *vbasedev)
+{
+    if (vfio_kvm_device_del_fd(vbasedev->fd)) {
+        error_report("Failed to del device %s to KVM VFIO device",
+                     vbasedev->sysfsdev);
+    }
+}
+
 static int
 __vfio_device_detach_hwpt(VFIODevice *vbasedev, Error **errp)
 {
@@ -226,6 +242,7 @@ __vfio_device_detach_container(VFIODevice *vbasedev,
 {
     __vfio_device_detach_hwpt(vbasedev, errp);
     trace_vfio_iommufd_detach_device(container->be->fd, vbasedev->name);
+    vfio_kvm_device_del_device(vbasedev);
 
     /* iommufd unbind is done per device fd close */
 }
@@ -265,9 +282,12 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
     uint32_t hwpt_id;
     int ret;
 
+    vfio_kvm_device_add_device(vbasedev);
+
     /* Bind device to iommufd */
     ret = ioctl(vbasedev->fd, VFIO_DEVICE_BIND_IOMMUFD, &bind);
     if (ret) {
+        vfio_kvm_device_del_device(vbasedev);
         error_setg_errno(errp, errno, "error bind device fd=%d to iommufd=%d",
                          vbasedev->fd, bind.iommufd);
         return ret;
@@ -288,12 +308,15 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
         return ret;
     }
 
-    attach.pt_id = hwpt_id;
+    attach.pt_id = container->ioas_id;
     ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach);
     if (ret) {
+        vfio_kvm_device_del_device(vbasedev);
         error_setg_errno(errp, errno, "error alloc nested S2 hwpt");
         return ret;
     }
+
+    hwpt_id = attach.pt_id;
     trace_vfio_iommufd_attach_device(bind.iommufd, vbasedev->name,
                                      vbasedev->fd, container->ioas_id,
                                      hwpt_id);
@@ -483,11 +506,6 @@ static int iommufd_attach_device(VFIODevice *vbasedev, AddressSpace *as,
             goto error;
         }
     }
-
-    /*
-     * TODO: kvmgroup, unable to do it before the protocol done
-     * between iommufd and kvm.
-     */
 
     vfio_as_add_container(space, bcontainer);
 
