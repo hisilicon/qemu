@@ -39,6 +39,8 @@ static bool iommufd_check_extension(VFIOContainer *bcontainer,
                                     VFIOContainerFeature feat)
 {
     switch (feat) {
+    case VFIO_FEAT_DMA_COPY:
+        return true;
     default:
         return false;
     };
@@ -53,6 +55,20 @@ static int iommufd_map(VFIOContainer *bcontainer, hwaddr iova,
     return iommufd_backend_map_dma(container->be,
                                    container->ioas_id,
                                    iova, size, vaddr, readonly);
+}
+
+static int iommufd_copy(VFIOContainer *src, VFIOContainer *dst,
+                        hwaddr iova, ram_addr_t size, bool readonly)
+{
+    VFIOIOMMUFDContainer *container_src = container_of(src,
+                                             VFIOIOMMUFDContainer, bcontainer);
+    VFIOIOMMUFDContainer *container_dst = container_of(dst,
+                                             VFIOIOMMUFDContainer, bcontainer);
+
+    assert(container_src->be->fd == container_dst->be->fd);
+
+    return iommufd_backend_copy_dma(container_src->be, container_src->ioas_id,
+                                    container_dst->ioas_id, iova, size, readonly);
 }
 
 static int iommufd_unmap(VFIOContainer *bcontainer,
@@ -188,12 +204,13 @@ __vfio_device_detach_container(VFIODevice *vbasedev,
                                VFIOIOMMUFDContainer *container,
                                Error **errp)
 {
-    struct vfio_device_detach_hwpt detach_data = {
+    struct vfio_device_attach_iommufd_pt detach_data = {
         .argsz = sizeof(detach_data),
         .flags = 0,
+        .pt_id = 0,
     };
 
-    if (ioctl(vbasedev->fd, VFIO_DEVICE_DETACH_HWPT, &detach_data)) {
+    if(ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &detach_data)) {
         error_setg_errno(errp, errno, "detach %s from ioas id=%d failed",
                          vbasedev->name, container->ioas_id);
     }
@@ -230,13 +247,11 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
         .iommufd = container->be->fd,
         .dev_cookie = (uint64_t)vbasedev,
     };
-    struct vfio_device_attach_ioas attach_data = {
-        .argsz = sizeof(attach_data),
-        .flags = 0,
-        .iommufd = container->be->fd,
-        .ioas_id = container->ioas_id,
+    struct vfio_device_attach_iommufd_pt attach = {
+        .argsz = sizeof(attach),
     };
     VFIOIOASHwpt *hwpt;
+    uint32_t hwpt_id;
     int ret;
 
     /* Bind device to iommufd */
@@ -252,20 +267,27 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
                                    vbasedev->fd, vbasedev->devid);
 
     /* Attach device to an ioas within iommufd */
-    ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOAS, &attach_data);
+    ret = iommufd_backend_alloc_hwpt(bind.iommufd, vbasedev->devid,
+                                     container->ioas_id,
+                                     container->nested_data.type,
+                                     container->nested_data.len,
+                                     container->nested_data.ptr, &hwpt_id);
     if (ret) {
-        error_setg_errno(errp, errno,
-                         "[iommufd=%d] error attach %s (%d) to ioasid=%d",
-                         container->be->fd, vbasedev->name, vbasedev->fd,
-                         attach_data.ioas_id);
+        error_setg_errno(errp, errno, "error alloc nested S2 hwpt");
         return ret;
+    }
 
+    attach.pt_id = hwpt_id;
+    ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach);
+    if (ret) {
+        error_setg_errno(errp, errno, "error alloc nested S2 hwpt");
+        return ret;
     }
     trace_vfio_iommufd_attach_device(bind.iommufd, vbasedev->name,
                                      vbasedev->fd, container->ioas_id,
-                                     attach_data.out_hwpt_id);
+                                     hwpt_id);
 
-    hwpt = vfio_container_get_hwpt(container, attach_data.out_hwpt_id);
+    hwpt = vfio_container_get_hwpt(container, hwpt_id);
     if (!hwpt) {
         __vfio_device_detach_container(vbasedev, container, errp);
         return -1;
@@ -390,6 +412,27 @@ static int iommufd_attach_device(VFIODevice *vbasedev, AddressSpace *as,
     bcontainer = &container->bcontainer;
     vfio_container_init(bcontainer, space, &iommufd_container_ops);
 
+    if (memory_region_is_iommu(as->root)) {
+        IOMMUMemoryRegion *iommu_mr = IOMMU_MEMORY_REGION(as->root);
+
+        ret = memory_region_iommu_get_attr(iommu_mr, IOMMU_ATTR_VFIO_NESTED,
+                                           (void *)&bcontainer->nested);
+        if (ret) {
+            bcontainer->nested = false;
+        }
+        ret = memory_region_iommu_get_attr(iommu_mr, IOMMU_ATTR_IOMMUFD_DATA,
+                                           (void *)&container->nested_data);
+        if (ret) {
+            container->nested_data.type = IOMMU_DEVICE_DATA_NONE;
+            container->nested_data.len = 0;
+            container->nested_data.ptr = NULL;
+        }
+        trace_vfio_iommufd_nested(vbasedev->iommufd->fd,
+                                  bcontainer->nested,
+                                  container->nested_data.type,
+                                  (uint64_t)container->nested_data.ptr);
+    }
+
     ret = vfio_device_attach_container(vbasedev, container, &err);
     if (ret) {
         /* todo check if any other thing to do */
@@ -419,12 +462,14 @@ static int iommufd_attach_device(VFIODevice *vbasedev, AddressSpace *as,
      * between iommufd and kvm.
      */
 
-    QLIST_INSERT_HEAD(&space->containers, bcontainer, next);
+    vfio_as_add_container(space, bcontainer);
 
-    bcontainer->listener = vfio_memory_listener;
-
-    memory_listener_register(&bcontainer->listener, bcontainer->space->as);
-
+    if (bcontainer->error) {
+        ret = -1;
+        error_propagate_prepend(errp, bcontainer->error,
+            "memory listener initialization failed: ");
+        goto error;
+    }
     bcontainer->initialized = true;
 
 out:
@@ -441,8 +486,7 @@ out:
     ret = ioctl(devfd, VFIO_DEVICE_GET_INFO, &dev_info);
     if (ret) {
         error_setg_errno(errp, errno, "error getting device info");
-        memory_listener_unregister(&bcontainer->listener);
-        QLIST_SAFE_REMOVE(bcontainer, next);
+        vfio_as_del_container(space, bcontainer);
         goto error;
     }
 
@@ -472,6 +516,7 @@ static void iommufd_detach_device(VFIODevice *vbasedev)
     VFIODevice *vbasedev_iter;
     VFIOIOASHwpt *hwpt;
     Error *err = NULL;
+    VFIOAddressSpace *space;
 
     if (!bcontainer) {
         goto out;
@@ -496,15 +541,25 @@ found:
         vfio_container_put_hwpt(hwpt);
     }
 
+    space = bcontainer->space;
+    /*
+     * Needs to remove the bcontainer from space->containers list before
+     * detach container. Otherwise, detach container may destroy the
+     * container if it's the last device. By removing bcontainer from the
+     * list, container is disconnected with address space memory listener.
+     */
+    if (QLIST_EMPTY(&container->hwpt_list)) {
+        vfio_as_del_container(space, bcontainer);
+    }
     __vfio_device_detach_container(vbasedev, container, &err);
     if (err) {
         error_report_err(err);
     }
     if (QLIST_EMPTY(&container->hwpt_list)) {
-        VFIOAddressSpace *space = bcontainer->space;
+        uint32_t ioas_id = container->ioas_id;
 
-        iommufd_backend_put_ioas(container->be, container->ioas_id);
         vfio_iommufd_container_destroy(container);
+        iommufd_backend_put_ioas(vbasedev->iommufd, ioas_id);
         vfio_put_address_space(space);
     }
     vbasedev->container = NULL;
@@ -516,6 +571,7 @@ out:
 const VFIOContainerOps iommufd_container_ops = {
     .check_extension = iommufd_check_extension,
     .dma_map = iommufd_map,
+    .dma_copy = iommufd_copy,
     .dma_unmap = iommufd_unmap,
     .attach_device = iommufd_attach_device,
     .detach_device = iommufd_detach_device,
