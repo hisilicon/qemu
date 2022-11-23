@@ -26,6 +26,8 @@
 #include "qemu/chardev_open.h"
 #include "pci.h"
 
+static IOMMUFDDeviceOps vfio_iommufd_device_ops;
+
 static int iommufd_cdev_map(const VFIOContainerBase *bcontainer, hwaddr iova,
                             ram_addr_t size, void *vaddr, bool readonly)
 {
@@ -315,6 +317,7 @@ static int iommufd_cdev_attach(const char *name, VFIODevice *vbasedev,
     VFIOContainerBase *bcontainer;
     VFIOIOMMUFDContainer *container;
     VFIOAddressSpace *space;
+    IOMMUFDDevice *idev = &vbasedev->idev;
     struct vfio_device_info dev_info = { .argsz = sizeof(dev_info) };
     int ret, devfd;
     uint32_t ioas_id;
@@ -432,6 +435,8 @@ found_container:
     QLIST_INSERT_HEAD(&bcontainer->device_list, vbasedev, container_next);
     QLIST_INSERT_HEAD(&vfio_device_list, vbasedev, global_next);
 
+    iommufd_device_init(idev, sizeof(*idev), &vfio_iommufd_device_ops,
+                        container->be, vbasedev->devid, container->ioas_id);
     trace_iommufd_cdev_device_info(vbasedev->name, devfd, vbasedev->num_irqs,
                                    vbasedev->num_regions, vbasedev->flags);
     return 0;
@@ -627,4 +632,36 @@ const VFIOIOMMUOps vfio_iommufd_ops = {
     .attach_device = iommufd_cdev_attach,
     .detach_device = iommufd_cdev_detach,
     .pci_hot_reset = iommufd_cdev_pci_hot_reset,
+};
+
+static int vfio_iommufd_device_attach_hwpt(IOMMUFDDevice *idev,
+                                           uint32_t hwpt_id)
+{
+    VFIODevice *vbasedev = container_of(idev, VFIODevice, idev);
+    Error *err = NULL;
+    int ret;
+
+    ret = iommufd_cdev_attach_ioas_hwpt(vbasedev, hwpt_id, &err);
+    if (err) {
+        error_report_err(err);
+    }
+    return ret;
+}
+
+static int vfio_iommufd_device_detach_hwpt(IOMMUFDDevice *idev)
+{
+    VFIODevice *vbasedev = container_of(idev, VFIODevice, idev);
+    Error *err = NULL;
+    int ret;
+
+    ret = iommufd_cdev_detach_ioas_hwpt(vbasedev, &err);
+    if (err) {
+        error_report_err(err);
+    }
+    return ret;
+}
+
+static IOMMUFDDeviceOps vfio_iommufd_device_ops = {
+    .attach_hwpt = vfio_iommufd_device_attach_hwpt,
+    .detach_hwpt = vfio_iommufd_device_detach_hwpt,
 };
