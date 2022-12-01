@@ -5701,17 +5701,93 @@ VTDAddressSpace *vtd_find_add_as(IntelIOMMUState *s, PCIBus *bus,
     return vtd_dev_as;
 }
 
+static bool vtd_check_hw_info(IntelIOMMUState *s, struct iommu_hw_info_vtd *vtd,
+                              Error **errp)
+{
+    if (s->aw_bits > VTD_HOST_AW_48BIT && !(vtd->cap_reg & VTD_CAP_FL5LP)) {
+        error_setg(errp, "User aw-bits: %u > host address width: %u",
+                   s->aw_bits, VTD_HOST_AW_48BIT);
+        return false;
+    }
+
+    if (!(vtd->ecap_reg & VTD_ECAP_NEST)) {
+        error_setg(errp, "Need nested translation on host in modern mode");
+        return false;
+    }
+
+    if (VTD_ECAP_PASID & s->host_ecap & ~vtd->ecap_reg) {
+        error_setg(errp, "vIOMMU enables pasid but host doesn't support it");
+        return false;
+    }
+
+    return true;
+}
+
+/* cap/ecap are readonly after vIOMMU finalized */
+static bool vtd_check_hw_info_finalized(IntelIOMMUState *s,
+                                        struct iommu_hw_info_vtd *vtd,
+                                        Error **errp)
+{
+    if ((s->host_cap ^ vtd->cap_reg) & VTD_CAP_MASK & s->host_cap) {
+        error_setg(errp, "vIOMMU cap %lx isn't compatible with host %llx",
+                   s->host_cap, vtd->cap_reg);
+        return false;
+    }
+
+    if ((s->host_ecap ^ vtd->ecap_reg) & VTD_ECAP_MASK & s->host_ecap) {
+        error_setg(errp, "vIOMMU ecap %lx isn't compatible with host %llx",
+                   s->host_ecap, vtd->ecap_reg);
+        return false;
+    }
+
+    if ((VTD_ECAP_PASID & s->host_ecap & vtd->ecap_reg) &&
+        VTD_GET_PSS(s->host_ecap) > VTD_GET_PSS(vtd->ecap_reg)) {
+        error_setg(errp, "vIOMMU pasid bits %lu > host pasid bits %llu",
+                   VTD_GET_PSS(s->host_ecap), VTD_GET_PSS(vtd->ecap_reg));
+        return false;
+    }
+
+    return true;
+}
+
 /* Caller should hold iommu lock. */
 static bool vtd_sync_hw_info(IntelIOMMUState *s, struct iommu_hw_info_vtd *vtd,
                              Error **errp)
 {
-    uint64_t addr_width;
+    uint64_t cap, ecap, addr_width, pasid_bits;
 
-    addr_width = (vtd->cap_reg >> 16) & 0x3fULL;
-    if (s->aw_bits > addr_width) {
-        error_setg(errp, "User aw-bits: %u > host address width: %lu",
-                   s->aw_bits, addr_width);
+    if (!s->scalable_modern) {
+        addr_width = (vtd->cap_reg >> 16) & 0x3fULL;
+        if (s->aw_bits > addr_width) {
+            error_setg(errp, "User aw-bits: %u > host address width: %lu",
+                       s->aw_bits, addr_width);
+            return false;
+        }
+        return true;
+    }
+
+    if (!vtd_check_hw_info(s, vtd, errp)) {
         return false;
+    }
+
+    if (s->cap_finalized) {
+        return vtd_check_hw_info_finalized(s, vtd, errp);
+    }
+
+    /* sync host cap/ecap to vIOMMU */
+
+    cap = s->host_cap & vtd->cap_reg & VTD_CAP_MASK;
+    s->host_cap &= ~VTD_CAP_MASK;
+    s->host_cap |= cap;
+    ecap = s->host_ecap & vtd->ecap_reg & VTD_ECAP_MASK;
+    s->host_ecap &= ~VTD_ECAP_MASK;
+    s->host_ecap |= ecap;
+
+    pasid_bits = VTD_GET_PSS(vtd->ecap_reg);
+    if ((VTD_ECAP_PASID & s->host_ecap & vtd->ecap_reg) &&
+            (VTD_GET_PSS(s->host_ecap) > pasid_bits)) {
+            s->host_ecap &= ~VTD_ECAP_PSS_MASK;
+            s->host_ecap |= VTD_ECAP_PSS(pasid_bits);
     }
 
     return true;
@@ -5754,9 +5830,13 @@ static int vtd_dev_set_iommu_device(PCIBus *bus, void *opaque, int32_t devfn,
 
     assert(0 <= devfn && devfn < PCI_DEVFN_MAX);
 
-    /* None IOMMUFD case */
-    if (!idev) {
+    if (!s->scalable_modern && !idev) {
+        /* Legacy vIOMMU and legacy VFIO backend */
         return 0;
+    } else if (!idev) {
+        /* Modern vIOMMU and legacy VFIO backend */
+        error_setg(errp, "Need IOMMUFD backend to setup nested page table");
+        return -EINVAL;
     }
 
     vtd_iommu_lock(s);
