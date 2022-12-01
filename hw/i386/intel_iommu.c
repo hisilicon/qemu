@@ -4104,7 +4104,7 @@ static void vtd_refresh_pasid_bind(IntelIOMMUState *s)
 static void vtd_pasid_cache_sync(IntelIOMMUState *s,
                                  VTDPASIDCacheInfo *pc_info)
 {
-    if (!s->root_scalable || !s->dmar_enabled) {
+    if (!s->scalable_modern || !s->root_scalable || !s->dmar_enabled) {
         return;
     }
 
@@ -5220,7 +5220,7 @@ static Property vtd_properties[] = {
     DEFINE_PROP_UINT8("aw-bits", IntelIOMMUState, aw_bits,
                       VTD_HOST_ADDRESS_WIDTH),
     DEFINE_PROP_BOOL("caching-mode", IntelIOMMUState, caching_mode, FALSE),
-    DEFINE_PROP_BOOL("x-scalable-mode", IntelIOMMUState, scalable_mode, FALSE),
+    DEFINE_PROP_STRING("x-scalable-mode", IntelIOMMUState, scalable_mode_str),
     DEFINE_PROP_BOOL("snoop-control", IntelIOMMUState, snoop_control, false),
     DEFINE_PROP_BOOL("x-pasid-mode", IntelIOMMUState, pasid, false),
     DEFINE_PROP_BOOL("dma-drain", IntelIOMMUState, dma_drain, true),
@@ -5965,6 +5965,9 @@ static void vtd_cap_init(IntelIOMMUState *s)
 
     if (x86_iommu->dt_supported) {
         s->ecap |= VTD_ECAP_DT;
+        if (s->scalable_modern) {
+            s->ecap |= VTD_ECAP_PRS;
+        }
     }
 
     if (x86_iommu->pt_supported) {
@@ -5976,8 +5979,14 @@ static void vtd_cap_init(IntelIOMMUState *s)
     }
 
     /* TODO: read cap/ecap from host to decide which cap to be exposed. */
-    if (s->scalable_mode) {
+    if (s->scalable_mode && !s->scalable_modern) {
         s->ecap |= VTD_ECAP_SMTS | VTD_ECAP_SRS | VTD_ECAP_SLTS;
+    } else if (s->scalable_mode && s->scalable_modern) {
+        s->ecap |= VTD_ECAP_SMTS | VTD_ECAP_SRS;
+        if (s->aw_bits == VTD_HOST_AW_48BIT) {
+            s->ecap |= VTD_ECAP_FLTS;
+            s->cap |= VTD_CAP_FL1GP;
+        }
     }
 
     if (s->snoop_control) {
@@ -6151,16 +6160,44 @@ static bool vtd_decide_config(IntelIOMMUState *s, Error **errp)
         }
     }
 
-    /* Currently only address widths supported are 39 and 48 bits */
-    if ((s->aw_bits != VTD_HOST_AW_39BIT) &&
-        (s->aw_bits != VTD_HOST_AW_48BIT)) {
-        error_setg(errp, "Supported values for aw-bits are: %d, %d",
-                   VTD_HOST_AW_39BIT, VTD_HOST_AW_48BIT);
+    if (s->scalable_mode && !s->dma_drain) {
+        error_setg(errp, "Need to set dma_drain for scalable mode");
         return false;
     }
 
-    if (s->scalable_mode && !s->dma_drain) {
-        error_setg(errp, "Need to set dma_drain for scalable mode");
+    if (s->scalable_mode_str &&
+        (strcmp(s->scalable_mode_str, "off") &&
+         strcmp(s->scalable_mode_str, "modern") &&
+         strcmp(s->scalable_mode_str, "legacy"))) {
+        error_setg(errp, "Invalid x-scalable-mode config,"
+                         "Please use \"modern\", \"legacy\" or \"off\"");
+        return false;
+    }
+
+    if (s->scalable_mode_str &&
+        !strcmp(s->scalable_mode_str, "legacy")) {
+        s->scalable_mode = true;
+        s->scalable_modern = false;
+    } else if (s->scalable_mode_str &&
+        !strcmp(s->scalable_mode_str, "modern")) {
+        s->scalable_mode = true;
+        s->scalable_modern = true;
+    } else {
+        s->scalable_mode = false;
+        s->scalable_modern = false;
+    }
+
+    if ((s->aw_bits != VTD_HOST_AW_48BIT) &&
+        (s->aw_bits != VTD_HOST_AW_39BIT) &&
+        !s->scalable_modern) {
+        error_setg(errp, "Supported values for aw-bits are: %d, %d",
+                   VTD_HOST_AW_48BIT, VTD_HOST_AW_39BIT);
+        return false;
+    }
+
+    if ((s->aw_bits != VTD_HOST_AW_48BIT) && s->scalable_modern) {
+        error_setg(errp, "Supported values for aw-bits are: %d",
+                   VTD_HOST_AW_48BIT);
         return false;
     }
 
