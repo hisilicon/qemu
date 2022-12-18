@@ -6,13 +6,16 @@
 
 #include <linux/types.h>
 #include <linux/ioctl.h>
+#include <linux/iommu.h>
 
 #define IOMMUFD_TYPE (';')
+
+#define IOMMUFD_INVALID_ID 0  /* valid ID starts from 1 */
 
 /**
  * DOC: General ioctl format
  *
- * The ioctl mechanims follows a general format to allow for extensibility. Each
+ * The ioctl interface follows a general format to allow for extensibility. Each
  * ioctl is passed in a structure pointer as the argument providing the size of
  * the structure in the first u32. The kernel checks that any structure space
  * beyond what it understands is 0. This allows userspace to use the backward
@@ -30,9 +33,9 @@
  *    correct.
  *  - ENOENT: An ID or IOVA provided does not exist.
  *  - ENOMEM: Out of memory.
- *  - EOVERFLOW: Mathematics oveflowed.
+ *  - EOVERFLOW: Mathematics overflowed.
  *
- * As well as additional errnos. within specific ioctls.
+ * As well as additional errnos, within specific ioctls.
  */
 enum {
 	IOMMUFD_CMD_BASE = 0x80,
@@ -48,12 +51,13 @@ enum {
 	IOMMUFD_CMD_DEVICE_GET_INFO,
 	IOMMUFD_CMD_HWPT_ALLOC,
 	IOMMUFD_CMD_HWPT_INVALIDATE,
+	IOMMUFD_CMD_PAGE_RESPONSE,
 };
 
 /**
  * struct iommu_destroy - ioctl(IOMMU_DESTROY)
  * @size: sizeof(struct iommu_destroy)
- * @id: iommufd object ID to destroy. Can by any destroyable object type.
+ * @id: iommufd object ID to destroy. Can be any destroyable object type.
  *
  * Destroy any object held within iommufd.
  */
@@ -80,7 +84,7 @@ struct iommu_ioas_alloc {
 #define IOMMU_IOAS_ALLOC _IO(IOMMUFD_TYPE, IOMMUFD_CMD_IOAS_ALLOC)
 
 /**
- * struct iommu_iova_range
+ * struct iommu_iova_range - ioctl(IOMMU_IOVA_RANGE)
  * @start: First IOVA
  * @last: Inclusive last IOVA
  *
@@ -95,34 +99,34 @@ struct iommu_iova_range {
  * struct iommu_ioas_iova_ranges - ioctl(IOMMU_IOAS_IOVA_RANGES)
  * @size: sizeof(struct iommu_ioas_iova_ranges)
  * @ioas_id: IOAS ID to read ranges from
- * @out_num_iovas: Output total number of ranges in the IOAS
+ * @num_iovas: Input/Output total number of ranges in the IOAS
  * @__reserved: Must be 0
- * @out_valid_iovas: Array of valid IOVA ranges. The array length is the smaller
- *                   of out_num_iovas or the length implied by size.
- * @out_valid_iovas.start: First IOVA in the allowed range
- * @out_valid_iovas.last: Inclusive last IOVA in the allowed range
+ * @allowed_iovas: Pointer to the output array of struct iommu_iova_range
+ * @out_iova_alignment: Minimum alignment required for mapping IOVA
  *
  * Query an IOAS for ranges of allowed IOVAs. Mapping IOVA outside these ranges
- * is not allowed. out_num_iovas will be set to the total number of iovas and
- * the out_valid_iovas[] will be filled in as space permits. size should include
- * the allocated flex array.
+ * is not allowed. num_iovas will be set to the total number of iovas and
+ * the allowed_iovas[] will be filled in as space permits.
  *
  * The allowed ranges are dependent on the HW path the DMA operation takes, and
  * can change during the lifetime of the IOAS. A fresh empty IOAS will have a
  * full range, and each attached device will narrow the ranges based on that
- * devices HW restrictions. Detatching a device can widen the ranges. Userspace
+ * device's HW restrictions. Detatching a device can widen the ranges. Userspace
  * should query ranges after every attach/detatch to know what IOVAs are valid
  * for mapping.
+ *
+ * On input num_iovas is the length of the allowed_iovas array. On output it is
+ * the total number of iovas filled in. The ioctl will return -EMSGSIZE and set
+ * num_iovas to the required value if num_iovas is too small. In this case the
+ * caller should allocate a larger output array and re-issue the ioctl.
  */
 struct iommu_ioas_iova_ranges {
 	__u32 size;
 	__u32 ioas_id;
-	__u32 out_num_iovas;
+	__u32 num_iovas;
 	__u32 __reserved;
-	struct iommu_valid_iovas {
-		__aligned_u64 start;
-		__aligned_u64 last;
-	} out_valid_iovas[];
+	__aligned_u64 allowed_iovas;
+	__aligned_u64 out_iova_alignment;
 };
 #define IOMMU_IOAS_IOVA_RANGES _IO(IOMMUFD_TYPE, IOMMUFD_CMD_IOAS_IOVA_RANGES)
 
@@ -130,6 +134,8 @@ struct iommu_ioas_iova_ranges {
  * struct iommu_ioas_allow_iovas - ioctl(IOMMU_IOAS_ALLOW_IOVAS)
  * @size: sizeof(struct iommu_ioas_allow_iovas)
  * @ioas_id: IOAS ID to allow IOVAs from
+ * @num_iovas: Input/Output total number of ranges in the IOAS
+ * @__reserved: Must be 0
  * @allowed_iovas: Pointer to array of struct iommu_iova_range
  *
  * Ensure a range of IOVAs are always available for allocation. If this call
@@ -142,8 +148,8 @@ struct iommu_ioas_iova_ranges {
  * When an allowed range is specified any narrowing will be refused, ie device
  * attachment can fail if the device requires limiting within the allowed range.
  *
- * Automatic IOVA allocation is also impacted by this call, it MAP will allocate
- * within the allowed IOVAs if they are present.
+ * Automatic IOVA allocation is also impacted by this call. MAP will only
+ * allocate within the allowed IOVAs if they are present.
  *
  * This call replaces the entire allowed list with the given list.
  */
@@ -181,8 +187,9 @@ enum iommufd_ioas_map_flags {
  *        then this must be provided as input.
  *
  * Set an IOVA mapping from a user pointer. If FIXED_IOVA is specified then the
- * mapping will be established at iova, otherwise a suitable location will be
- * automatically selected and returned in iova.
+ * mapping will be established at iova, otherwise a suitable location based on
+ * the reserved and allowed lists will be automatically selected and returned in
+ * iova.
  */
 struct iommu_ioas_map {
 	__u32 size;
@@ -212,7 +219,7 @@ struct iommu_ioas_map {
  *
  * This may be used to efficiently clone a subset of an IOAS to another, or as a
  * kind of 'cache' to speed up mapping. Copy has an effciency advantage over
- * establishing equivilant new mappings, as internal resources are shared, and
+ * establishing equivalent new mappings, as internal resources are shared, and
  * the kernel will pin the user memory only once.
  */
 struct iommu_ioas_copy {
@@ -228,13 +235,13 @@ struct iommu_ioas_copy {
 
 /**
  * struct iommu_ioas_unmap - ioctl(IOMMU_IOAS_UNMAP)
- * @size: sizeof(struct iommu_ioas_copy)
+ * @size: sizeof(struct iommu_ioas_unmap)
  * @ioas_id: IOAS ID to change the mapping of
  * @iova: IOVA to start the unmapping at
  * @length: Number of bytes to unmap, and return back the bytes unmapped
  *
  * Unmap an IOVA range. The iova/length must be a superset of a previously
- * mapped range used with IOMMU_IOAS_PAGETABLE_MAP or COPY. Splitting or
+ * mapped range used with IOMMU_IOAS_MAP or IOMMU_IOAS_COPY. Splitting or
  * truncating ranges is not allowed. The values 0 to U64_MAX will unmap
  * everything.
  */
@@ -247,7 +254,59 @@ struct iommu_ioas_unmap {
 #define IOMMU_IOAS_UNMAP _IO(IOMMUFD_TYPE, IOMMUFD_CMD_IOAS_UNMAP)
 
 /**
- * enum iommufd_vfio_ioas_op
+ * enum iommufd_option - ioctl(IOMMU_OPTION_RLIMIT_MODE) and
+ *                       ioctl(IOMMU_OPTION_HUGE_PAGES)
+ * @IOMMU_OPTION_RLIMIT_MODE:
+ *    Change how RLIMIT_MEMLOCK accounting works. The caller must have privilege
+ *    to invoke this. Value 0 (default) is user based accouting, 1 uses process
+ *    based accounting. Global option, object_id must be 0
+ * @IOMMU_OPTION_HUGE_PAGES:
+ *    Value 1 (default) allows contiguous pages to be combined when generating
+ *    iommu mappings. Value 0 disables combining, everything is mapped to
+ *    PAGE_SIZE. This can be useful for benchmarking.  This is a per-IOAS
+ *    option, the object_id must be the IOAS ID.
+ */
+enum iommufd_option {
+	IOMMU_OPTION_RLIMIT_MODE = 0,
+	IOMMU_OPTION_HUGE_PAGES = 1,
+};
+
+/**
+ * enum iommufd_option_ops - ioctl(IOMMU_OPTION_OP_SET) and
+ *                           ioctl(IOMMU_OPTION_OP_GET)
+ * @IOMMU_OPTION_OP_SET: Set the option's value
+ * @IOMMU_OPTION_OP_GET: Get the option's value
+ */
+enum iommufd_option_ops {
+	IOMMU_OPTION_OP_SET = 0,
+	IOMMU_OPTION_OP_GET = 1,
+};
+
+/**
+ * struct iommu_option - iommu option multiplexer
+ * @size: sizeof(struct iommu_option)
+ * @option_id: One of enum iommufd_option
+ * @op: One of enum iommufd_option_ops
+ * @__reserved: Must be 0
+ * @object_id: ID of the object if required
+ * @val64: Option value to set or value returned on get
+ *
+ * Change a simple option value. This multiplexor allows controlling a options
+ * on objects. IOMMU_OPTION_OP_SET will load an option and IOMMU_OPTION_OP_GET
+ * will return the current value.
+ */
+struct iommu_option {
+	__u32 size;
+	__u32 option_id;
+	__u16 op;
+	__u16 __reserved;
+	__u32 object_id;
+	__aligned_u64 val64;
+};
+#define IOMMU_OPTION _IO(IOMMUFD_TYPE, IOMMUFD_CMD_OPTION)
+
+/**
+ * enum iommufd_vfio_ioas_op - IOMMU_VFIO_IOAS_* ioctls
  * @IOMMU_VFIO_IOAS_GET: Get the current compatibility IOAS
  * @IOMMU_VFIO_IOAS_SET: Change the current compatibility IOAS
  * @IOMMU_VFIO_IOAS_CLEAR: Disable VFIO compatibility
@@ -260,7 +319,7 @@ enum iommufd_vfio_ioas_op {
 
 /**
  * struct iommu_vfio_ioas - ioctl(IOMMU_VFIO_IOAS)
- * @size: sizeof(struct iommu_ioas_copy)
+ * @size: sizeof(struct iommu_vfio_ioas)
  * @ioas_id: For IOMMU_VFIO_IOAS_SET the input IOAS ID to set
  *           For IOMMU_VFIO_IOAS_GET will output the IOAS ID
  * @op: One of enum iommufd_vfio_ioas_op
@@ -294,7 +353,7 @@ enum iommu_device_data_type {
  * @__reserved: Must be 0
  * @cap_reg: Basic capability register value
  * @ecap_reg: Extended capability register value
-  */
+ */
 struct iommu_device_info_vtd {
 	__u32 flags;
 	__u32 __reserved;
@@ -323,7 +382,7 @@ struct iommu_device_info_smmuv3 {
  * @dev_id: the device being attached to the IOMMU
  * @__reserved: Must be 0
  * @out_data_type: type of the output data, i.e. enum iommu_device_data_type
- * @out_data_len: legnth of the type specific data
+ * @out_data_len: length of the type specific data
  * @out_data_ptr: pointer to the type specific data
  */
 struct iommu_device_info {
@@ -398,7 +457,7 @@ struct iommu_hwpt_arm_smmuv3 {
  * @dev_id: the device to allocate this HWPT for
  * @pt_id: the parent of this HWPT (IOAS or HWPT).
  * @data_type: type of the user data, i.e. enum iommu_device_data_type
- * @data_len: legnth of the type specific data
+ * @data_len: length of the type specific data
  * @data_uptr: user pointer to the type specific data
  * @out_hwpt_id: output HWPT ID for the allocated object
  * @__reserved: Must be 0
@@ -413,10 +472,32 @@ struct iommu_hwpt_alloc {
 	__u32 data_type;
 	__u32 data_len;
 	__aligned_u64 data_uptr;
+	__s32 eventfd;
 	__u32 out_hwpt_id;
+	__s32 out_fault_fd;
 	__u32 __reserved;
 };
 #define IOMMU_HWPT_ALLOC _IO(IOMMUFD_TYPE, IOMMUFD_CMD_HWPT_ALLOC)
+
+/*
+ * DMA Fault Region Layout
+ * @tail: index relative to the start of the ring buffer at which the
+ *        consumer finds the next item in the buffer
+ * @entry_size: fault ring buffer entry size in bytes
+ * @nb_entries: max capacity of the fault ring buffer
+ * @offset: ring buffer offset relative to the start of the region
+ * @head: index relative to the start of the ring buffer at which the
+ *        producer (kernel) inserts items into the buffers
+ */
+struct iommufd_stage1_dma_fault {
+	/* Write-Only */
+	__u32   tail;
+	/* Read-Only */
+	__u32   entry_size;
+	__u32	nb_entries;
+	__u32	offset;
+	__u32   head;
+};
 
 /* Intel VT-d specific granularity of queued invalidation */
 enum iommu_vtd_qi_granularity {
@@ -504,7 +585,7 @@ struct iommu_hwpt_invalidate_arm_smmuv3 {
  * @size: sizeof(struct iommu_hwpt_invalidate)
  * @hwpt_id: HWPT ID of target hardware page table for the invalidation
  * @data_type: type of the user data, i.e. enum iommu_device_data_type
- * @data_len: legnth of the type specific data
+ * @data_len: length of the type specific data
  * @data_uptr: user pointer to the type specific data
  */
 struct iommu_hwpt_invalidate {
@@ -515,4 +596,23 @@ struct iommu_hwpt_invalidate {
 	__aligned_u64 data_uptr;
 };
 #define IOMMU_HWPT_INVALIDATE _IO(IOMMUFD_TYPE, IOMMUFD_CMD_HWPT_INVALIDATE)
+
+/**
+ * struct iommu_hwpt_page_response - ioctl(IOMMUFD_CMD_PAGE_RESPONSE)
+ * @size: sizeof(struct iommu_hwpt_page_response)
+ * @flags: must be 0
+ * @hwpt_id: hwpt ID of target hardware page table for the response
+ * @dev_id: device ID of target device for the response
+ * @resp: response info
+ *
+ */
+struct iommu_hwpt_page_response {
+	__u32 size;
+	__u32 flags;
+	__u32 hwpt_id;
+	__u32 dev_id;
+	struct iommu_page_response resp;
+};
+
+#define IOMMU_PAGE_RESPONSE _IO(IOMMUFD_TYPE, IOMMUFD_CMD_PAGE_RESPONSE)
 #endif
