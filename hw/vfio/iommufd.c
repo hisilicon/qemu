@@ -308,7 +308,7 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
         return ret;
     }
 
-    attach.pt_id = container->ioas_id;
+    attach.pt_id = hwpt_id;
     ret = ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach);
     if (ret) {
         vfio_kvm_device_del_device(vbasedev);
