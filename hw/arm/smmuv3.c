@@ -1052,6 +1052,98 @@ static void smmuv3_s1_range_inval(SMMUState *s, Cmd *cmd)
     }
 }
 
+static int smmuv3_report_iommu_fault(SMMUHwpt *hwpt, int count,
+                                  struct iommu_fault *buf)
+{
+    struct iommu_fault *fault = buf;
+    SMMUDevice *sdev = hwpt->sdev;
+    SMMUv3State *s3 = sdev->smmu;
+    uint32_t sid = smmu_get_sid(sdev);
+    SMMUEventInfo info = {0};
+    struct iommu_fault_page_request *prm;
+
+    info.sid = sid;
+    switch (fault->type) {
+    case IOMMU_FAULT_PAGE_REQ:
+
+        prm = &fault->prm;
+        info.type = SMMU_EVT_F_TRANSLATION;
+        info.u.f_translation.addr = prm->addr;
+        info.u.f_translation.stall = true;
+        info.u.f_translation.ssid = prm->pasid;
+        info.u.f_translation.stag = prm->grpid;
+
+        if (prm->flags | IOMMU_FAULT_PAGE_REQUEST_PASID_VALID) {
+            info.u.f_translation.ssv = true;
+        }
+        if (prm->perm & IOMMU_FAULT_PERM_READ) {
+            info.u.f_translation.rnw = true;
+        }
+        if (prm->perm & IOMMU_FAULT_PERM_PRIV) {
+            info.u.f_translation.pnu = true;
+        }
+        if (prm->perm & IOMMU_FAULT_PERM_EXEC) {
+            info.u.f_translation.ind = true;
+        }
+
+        smmuv3_record_event(s3, &info);
+        break;
+    default:
+        printf("%s, (ToDo)Unsupported event type %d", __func__, fault->type);
+        return -ENOENT;
+    }
+
+    return 0;
+}
+
+static void smmuv3_dma_fault_notifier_handler(void *opaque)
+{
+    SMMUHwpt *hwpt = opaque;
+
+    struct iommufd_stage1_dma_fault header;
+    struct iommu_fault *queue = NULL;
+    char *queue_buffer = NULL;
+    ssize_t bytes;
+
+    if (!event_notifier_test_and_clear(&hwpt->notifier)) {
+        return;
+    }
+
+    bytes = pread(hwpt->fault_fd, &header, sizeof(header), 0);
+    if (bytes != sizeof(header)) {
+        error_report("%s unable to read the fault region header (0x%lx)",
+                     __func__, bytes);
+        return;
+    }
+
+    if (!queue) {
+        size_t queue_size = header.nb_entries * header.entry_size;
+
+        queue_buffer = g_malloc(queue_size);
+        bytes =  pread(hwpt->fault_fd, queue_buffer, queue_size, header.offset);
+        if (bytes != queue_size) {
+            error_report("%s unable to read the fault queue (0x%lx)",
+                         __func__, bytes);
+            return;
+        }
+
+        queue = (struct iommu_fault *)queue_buffer;
+    }
+
+    while (hwpt->fault_tail_index != header.head) {
+        smmuv3_report_iommu_fault(hwpt, 1,
+                               &queue[hwpt->fault_tail_index]);
+        hwpt->fault_tail_index =
+            (hwpt->fault_tail_index + 1) % header.nb_entries;
+    }
+    bytes = pwrite(hwpt->fault_fd, &hwpt->fault_tail_index, 4, 0);
+    if (bytes != 4) {
+        error_report("%s unable to write the fault region tail index (0x%lx)",
+                     __func__, bytes);
+    }
+    g_free(queue_buffer);
+}
+
 static void smmuv3_config_ste(SMMUState *bs, uint32_t sid)
 {
 #ifdef __linux__
@@ -1100,7 +1192,8 @@ static void smmuv3_config_ste(SMMUState *bs, uint32_t sid)
                             iommu_config.config, cfg->s1ctxptr);
 
     ret = smmu_iommu_install_nested_ste(bs, sdev, IOMMU_DEVICE_DATA_ARM_SMMUV3,
-                                        sizeof(iommu_config), &iommu_config);
+                                        sizeof(iommu_config), &iommu_config,
+                                        smmuv3_dma_fault_notifier_handler);
     if (ret) {
         error_report("Unable to alloc Stage-1 HW Page Table: %d", ret);
         return;
