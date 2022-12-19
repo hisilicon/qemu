@@ -1232,6 +1232,32 @@ static void smmuv3_s1_asid_inval(SMMUState *s, uint16_t asid)
     smmu_iotlb_inv_asid(s, asid);
 }
 
+static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
+                                       uint32_t stag, uint32_t code)
+{
+    IOMMUMemoryRegion *mr = smmu_iommu_mr(bs, sid);
+    struct iommu_page_response page_resp = {0};
+    SMMUDevice *sdev;
+    SMMUHwpt *hwpt;
+    IOMMUFDDevice *idev;
+
+    if (!mr) {
+        return;
+    }
+
+    sdev = container_of(mr, SMMUDevice, iommu);
+    hwpt = sdev->hwpt;
+    idev = sdev->idev;
+
+    page_resp.argsz = sizeof(struct iommu_page_response);
+    page_resp.version = IOMMU_PAGE_RESP_VERSION_1;
+    page_resp.grpid = stag;
+    page_resp.code = code;
+
+    iommufd_page_response(idev->iommufd, hwpt->hwpt_id,
+                          idev->dev_id, &page_resp);
+}
+
 static int smmuv3_cmdq_consume(SMMUv3State *s)
 {
     SMMUState *bs = ARM_SMMU(s);
@@ -1356,10 +1382,22 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_TLBI_S2_IPA:
         case SMMU_CMD_ATC_INV:
         case SMMU_CMD_PRI_RESP:
-        case SMMU_CMD_RESUME:
         case SMMU_CMD_STALL_TERM:
             trace_smmuv3_unhandled_cmd(type);
             break;
+        case SMMU_CMD_RESUME:
+        {
+            uint32_t sid = CMD_SID(&cmd);
+            uint16_t stag = CMD_RESUME_STAG(&cmd);
+            uint8_t action = CMD_RESUME_AC(&cmd);
+            uint32_t code = IOMMU_PAGE_RESP_INVALID;
+
+            if (action) {
+                code = IOMMU_PAGE_RESP_SUCCESS;
+            }
+            smmuv3_notify_stall_resume(bs, sid, stag, code);
+            break;
+        }
         default:
             cmd_error = SMMU_CERROR_ILL;
             qemu_log_mask(LOG_GUEST_ERROR,
