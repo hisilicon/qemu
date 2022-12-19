@@ -302,7 +302,8 @@ static int vfio_device_attach_container(VFIODevice *vbasedev,
                                      container->ioas_id,
                                      container->nested_data.type,
                                      container->nested_data.len,
-                                     container->nested_data.ptr, &hwpt_id);
+                                     container->nested_data.ptr, -1,
+                                     &hwpt_id, NULL);
     if (ret) {
         error_setg_errno(errp, errno, "error alloc nested S2 hwpt");
         return ret;

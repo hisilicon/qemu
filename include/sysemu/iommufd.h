@@ -47,8 +47,8 @@ int iommufd_backend_copy_dma(IOMMUFDBackend *be, uint32_t src_ioas,
                              ram_addr_t size, bool readonly);
 int iommufd_backend_alloc_hwpt(int iommufd, uint32_t dev_id,
                                uint32_t pt_id, uint32_t data_type,
-                               uint32_t len, void *data_ptr,
-                               uint32_t *out_hwpt);
+                               uint32_t len, void *data_ptr, int eventfd,
+                               uint32_t *out_hwpt, int *out_fault_fd);
 int iommufd_backend_invalidate_cache(int iommufd, uint32_t hwpt_id,
                                      uint32_t data_type, uint32_t len,
 				     void *data_ptr);

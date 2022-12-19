@@ -87,9 +87,13 @@ typedef struct SMMUTransCfg {
 } SMMUTransCfg;
 
 typedef struct SMMUHwpt {
-    void *smmu;
+    void  *sdev;
     uint32_t hwpt_id;
     int iommufd;
+    int eventfd;
+    EventNotifier notifier;
+    int fault_fd;
+    uint32_t fault_tail_index;
 } SMMUHwpt;
 
 typedef struct SMMUDevice {
@@ -195,7 +199,7 @@ void smmu_inv_notifiers_mr(IOMMUMemoryRegion *mr);
 /* IOMMUFD helpers */
 int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
                                   uint32_t data_type, uint32_t data_len,
-                                  void *data);
+                                  void *data, IOHandler  *handler);
 void smmu_iommu_uninstall_nested_ste(SMMUDevice *sdev);
 int smmu_iommu_invalidate_cache(SMMUDevice *sdev, uint32_t data_type,
                                 uint32_t data_len, void *data);
