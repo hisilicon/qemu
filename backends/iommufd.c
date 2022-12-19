@@ -245,8 +245,8 @@ int iommufd_backend_copy_dma(IOMMUFDBackend *be, uint32_t src_ioas,
 
 int iommufd_backend_alloc_hwpt(int iommufd, uint32_t dev_id,
                                uint32_t pt_id, uint32_t data_type,
-                               uint32_t len, void *data_ptr,
-                               uint32_t *out_hwpt)
+                               uint32_t len, void *data_ptr, int fd,
+                               uint32_t *out_hwpt, int *out_fault_fd)
 {
     int ret;
     struct iommu_hwpt_alloc alloc_hwpt = {
@@ -257,6 +257,7 @@ int iommufd_backend_alloc_hwpt(int iommufd, uint32_t dev_id,
         .data_type = data_type,
         .data_len = len,
         .data_uptr = (uint64_t)data_ptr,
+        .eventfd = fd,
         .__reserved = 0,
     };
 
@@ -267,6 +268,9 @@ int iommufd_backend_alloc_hwpt(int iommufd, uint32_t dev_id,
         error_report("IOMMU_HWPT_ALLOC failed: %s", strerror(errno));
     } else {
         *out_hwpt = alloc_hwpt.out_hwpt_id;
+        if (out_fault_fd) {
+            *out_fault_fd = alloc_hwpt.out_fault_fd;
+        }
     }
     return !ret ? 0 : -errno;
 }
