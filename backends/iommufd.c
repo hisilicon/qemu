@@ -297,6 +297,25 @@ int iommufd_backend_invalidate_cache(int iommufd, uint32_t hwpt_id,
     return !ret ? 0 : -errno;
 }
 
+int iommufd_page_response(int iommufd, uint32_t hwpt_id,
+                          uint32_t dev_id, struct iommu_page_response *resp)
+{
+    int ret;
+    struct iommu_hwpt_page_response page = {
+        .size = sizeof(page),
+        .flags = 0,
+        .hwpt_id = hwpt_id,
+        .dev_id = dev_id,
+        .resp = *resp,
+    };
+
+    ret = ioctl(iommufd, IOMMU_PAGE_RESPONSE, &page);
+    if (ret) {
+        error_report("IOMMU_PAGE_RESPONSE failed: %s", strerror(errno));
+    }
+    return !ret ? 0 : -errno;
+}
+
 static const TypeInfo iommufd_backend_info = {
     .name = TYPE_IOMMUFD_BACKEND,
     .parent = TYPE_OBJECT,
