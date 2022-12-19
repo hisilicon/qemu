@@ -52,4 +52,6 @@ int iommufd_backend_alloc_hwpt(int iommufd, uint32_t dev_id,
 int iommufd_backend_invalidate_cache(int iommufd, uint32_t hwpt_id,
                                      uint32_t data_type, uint32_t len,
 				     void *data_ptr);
+int iommufd_page_response(int iommufd, uint32_t hwpt_id,
+                          uint32_t dev_id, struct iommu_page_response *resp);
 #endif
