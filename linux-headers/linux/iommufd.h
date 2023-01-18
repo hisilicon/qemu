@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /* Copyright (c) 2021-2022, NVIDIA CORPORATION & AFFILIATES.
  */
-#ifndef _UAPI_IOMMUFD_H
-#define _UAPI_IOMMUFD_H
+#ifndef _IOMMUFD_H
+#define _IOMMUFD_H
 
 #include <linux/types.h>
 #include <linux/ioctl.h>
@@ -360,8 +360,10 @@ enum iommu_device_data_type {
  *
  * @flags: Must be set to 0
  * @__reserved: Must be 0
- * @cap_reg: Basic capability register value
- * @ecap_reg: Extended capability register value
+ * @cap_reg: Value of Intel VT-d capability register defined in chapter
+ *	     11.4.2 of Intel VT-d spec.
+ * @ecap_reg: Value of Intel VT-d capability register defined in chapter
+ *	     11.4.3 of Intel VT-d spec.
  *
  * Intel hardware iommu capability.
  */
@@ -372,32 +374,47 @@ struct iommu_device_info_vtd {
 	__aligned_u64 ecap_reg;
 };
 
+enum iommu_pgtbl_types {
+	IOMMU_PGTBL_TYPE_NONE,
+	IOMMU_PGTBL_TYPE_VTD_S1,
+};
+
 /**
  * struct iommu_device_info - ioctl(IOMMU_DEVICE_GET_INFO)
  * @size: sizeof(struct iommu_device_info)
  * @flags: Must be 0
  * @dev_id: The device being attached to the IOMMU
- * @data_type: One of enum iommu_device_data_type
- * @data_len: Length of the type specific data buffer. It cannot be
- *	      higher than the system PAGE_SIZE.
- * @__reserved: Must be 0
+ * @data_len: Input the type specific data buffer length in bytes
  * @data_ptr: Pointer to the type specific structure (e.g.
  *	      struct iommu_device_info_vtd)
+ * @out_pgtbl_type_bitmap: Output the supported page table type. Each
+ *			    bit is defined in enum iommu_pgtbl_types.
+ * @out_data_type: Output the underlying iommu hardware type, it is one
+ *		   of enum iommu_device_data_type.
+ * @__reserved: Must be 0
  *
  * Query the hardware iommu capability for given device which has been
- * bound to iommufd. @device_type is the desired iommu hardware type.
- * If underlying iommu hardware supports this type, the hardware iommu
- * capability info would be written to the buffer specified by @data_ptr
- * and return 0. Otherwise, error would be returned.
+ * bound to iommufd. @data_len is set to be the size of the buffer to
+ * type specific data and the data will be filled. Trailing bytes are
+ * zeroed if the user buffer is larger than the data kernel has.
+ *
+ * The type specific data would be used to sync capability between the
+ * vIOMMU and the hardware IOMMU, also for the availabillity checking of
+ * iommu hardware feature like dirty page tracking in IOMMU page table.
+ *
+ * The @out_device_type will be filled if the ioctl succeeds. It would
+ * be used in multiple iommufd operations like hw_pagetable allocation,
+ * iommu cache invalidation.
  */
 struct iommu_device_info {
 	__u32 size;
 	__u32 flags;
 	__u32 dev_id;
-	__u32 device_type;
 	__u32 data_len;
-	__u32 __reserved;
 	__aligned_u64 data_ptr;
+	__aligned_u64 out_pgtbl_type_bitmap;
+	__u32 out_device_type;
+	__u32 __reserved;
 };
 #define IOMMU_DEVICE_GET_INFO _IO(IOMMUFD_TYPE, IOMMUFD_CMD_DEVICE_GET_INFO)
 
@@ -434,7 +451,7 @@ enum iommu_hwpt_intel_vtd_flags {
  *		subjected to the user-managed stage-1 page table.
  * @__reserved: Must be 0
  *
- * The IOMMU_DEVICE_DATA_INTEL_VTD specific data for creating hw_pagetable
+ * The IOMMU_PGTBL_TYPE_VTD_S1 specific data for creating hw_pagetable
  * to represent the user-managed stage-1 page table that is used in nested
  * translation.
  *
@@ -461,7 +478,7 @@ struct iommu_hwpt_intel_vtd {
  * @flags: Must be 0
  * @dev_id: The device to allocate this HWPT for
  * @pt_id: The parent of this HWPT (IOAS or HWPT)
- * @data_type: One of enum iommu_device_data_type
+ * @data_type: One of enum iommu_pgtbl_types
  * @data_len: Length of the type specific data
  * @data_uptr: User pointer to the type specific data
  * @out_hwpt_id: Output HWPT ID for the allocated object
@@ -478,11 +495,10 @@ struct iommu_hwpt_intel_vtd {
  * +==============================+=====================================+
  * | @data_type                   |      Data structure in @data_uptr   |
  * +------------------------------+-------------------------------------+
- * | IOMMU_DEVICE_DATA_NONE       |                 N/A                 |
+ * | IOMMU_PGTBL_TYPE_NONE        |                 N/A                 |
  * +------------------------------+-------------------------------------+
- * | IOMMU_DEVICE_DATA_INTEL_VTD  |      struct iommu_hwpt_intel_vtd    |
+ * | IOMMU_PGTBL_TYPE_VTD_S1      |      struct iommu_hwpt_intel_vtd    |
  * +------------------------------+-------------------------------------+
-
  */
 struct iommu_hwpt_alloc {
 	__u32 size;
@@ -531,7 +547,7 @@ enum iommu_hwpt_intel_vtd_invalidate_flags {
  *		  compute the invalidation range togehter with @nb_granules.
  * @nb_granules: Number of contiguous granules to be invalidated.
  *
- * The IOMMU_DEVICE_DATA_INTEL_VTD specific invalidation data for user-managed
+ * The IOMMU_PGTBL_TYPE_VTD_S1 specific invalidation data for user-managed
  * stage-1 cache invalidation under nested translation. Userspace uses this
  * structure to tell host about the impacted caches after modifying the stage-1
  * page table.
@@ -555,7 +571,7 @@ struct iommu_hwpt_invalidate_intel_vtd {
  * struct iommu_hwpt_invalidate - ioctl(IOMMU_HWPT_INVALIDATE)
  * @size: sizeof(struct iommu_hwpt_invalidate)
  * @hwpt_id: HWPT ID of target hardware page table for the invalidation
- * @data_type: One of enum iommu_device_data_type
+ * @data_type: One of enum iommu_pgtbl_types
  * @data_len: Length of the type specific data
  * @data_uptr: User pointer to the type specific data
  *
@@ -568,7 +584,7 @@ struct iommu_hwpt_invalidate_intel_vtd {
  * +==============================+========================================+
  * | @data_type                   |     Data structure in @data_uptr       |
  * +------------------------------+----------------------------------------+
- * | IOMMU_DEVICE_DATA_INTEL_VTD  | struct iommu_hwpt_invalidate_intel_vtd |
+ * | IOMMU_PGTBL_TYPE_VTD_S1      | struct iommu_hwpt_invalidate_intel_vtd |
  * +------------------------------+----------------------------------------+
  */
 struct iommu_hwpt_invalidate {

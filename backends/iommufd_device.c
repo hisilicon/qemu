@@ -61,10 +61,9 @@ int iommufd_device_get_info(IOMMUFDDevice *idev,
         .size = sizeof(info),
         .flags = 0,
         .dev_id = idev->dev_id,
-        .device_type = *type,
         .data_len = len,
-        .__reserved = 0,
         .data_ptr = (uint64_t)data,
+        .__reserved = 0,
     };
     int ret;
 
@@ -72,7 +71,7 @@ int iommufd_device_get_info(IOMMUFDDevice *idev,
     if (ret) {
         error_report("Failed to get info %m");
     } else {
-        *type = info.device_type;
+        *type = info.out_device_type;
     }
 
     return ret;
