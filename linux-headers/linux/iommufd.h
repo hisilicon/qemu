@@ -355,6 +355,11 @@ enum iommu_device_data_type {
 	IOMMU_DEVICE_DATA_INTEL_VTD,
 };
 
+enum iommu_pgtbl_types {
+	IOMMU_PGTBL_TYPE_NONE,
+	IOMMU_PGTBL_TYPE_VTD_S1,
+};
+
 /**
  * struct iommu_device_info_vtd - Intel VT-d device info
  *
@@ -374,11 +379,6 @@ struct iommu_device_info_vtd {
 	__aligned_u64 ecap_reg;
 };
 
-enum iommu_pgtbl_types {
-	IOMMU_PGTBL_TYPE_NONE,
-	IOMMU_PGTBL_TYPE_VTD_S1,
-};
-
 /**
  * struct iommu_device_info - ioctl(IOMMU_DEVICE_GET_INFO)
  * @size: sizeof(struct iommu_device_info)
@@ -387,11 +387,11 @@ enum iommu_pgtbl_types {
  * @data_len: Input the type specific data buffer length in bytes
  * @data_ptr: Pointer to the type specific structure (e.g.
  *	      struct iommu_device_info_vtd)
- * @out_pgtbl_type_bitmap: Output the supported page table type. Each
- *			    bit is defined in enum iommu_pgtbl_types.
  * @out_data_type: Output the underlying iommu hardware type, it is one
  *		   of enum iommu_device_data_type.
  * @__reserved: Must be 0
+ * @out_pgtbl_type_bitmap: Output the supported page table type. Each
+ *			   bit is defined in enum iommu_pgtbl_types.
  *
  * Query the hardware iommu capability for given device which has been
  * bound to iommufd. @data_len is set to be the size of the buffer to
@@ -405,6 +405,10 @@ enum iommu_pgtbl_types {
  * The @out_device_type will be filled if the ioctl succeeds. It would
  * be used in multiple iommufd operations like hw_pagetable allocation,
  * iommu cache invalidation.
+ *
+ * @out_pgtbl_type_bitmap tells the userspace the supported page tables.
+ * This differs per @out_data_type. Userspace should check it before
+ * allocating hw_pagetable in userspace.
  */
 struct iommu_device_info {
 	__u32 size;
@@ -412,9 +416,9 @@ struct iommu_device_info {
 	__u32 dev_id;
 	__u32 data_len;
 	__aligned_u64 data_ptr;
-	__aligned_u64 out_pgtbl_type_bitmap;
 	__u32 out_device_type;
 	__u32 __reserved;
+	__aligned_u64 out_pgtbl_type_bitmap;
 };
 #define IOMMU_DEVICE_GET_INFO _IO(IOMMUFD_TYPE, IOMMUFD_CMD_DEVICE_GET_INFO)
 
@@ -451,9 +455,8 @@ enum iommu_hwpt_intel_vtd_flags {
  *		subjected to the user-managed stage-1 page table.
  * @__reserved: Must be 0
  *
- * The IOMMU_PGTBL_TYPE_VTD_S1 specific data for creating hw_pagetable
- * to represent the user-managed stage-1 page table that is used in nested
- * translation.
+ * The Intel VT-d specific data for creating hw_pagetable to represent
+ * the user-managed stage-1 page table that is used in nested translation.
  *
  * In nested translation, the stage-1 page table locates in the address
  * space that defined by the corresponding stage-2 page table. Hence the
@@ -547,15 +550,15 @@ enum iommu_hwpt_intel_vtd_invalidate_flags {
  *		  compute the invalidation range togehter with @nb_granules.
  * @nb_granules: Number of contiguous granules to be invalidated.
  *
- * The IOMMU_PGTBL_TYPE_VTD_S1 specific invalidation data for user-managed
- * stage-1 cache invalidation under nested translation. Userspace uses this
- * structure to tell host about the impacted caches after modifying the stage-1
- * page table.
+ * The Intel VT-d specific invalidation data for user-managed stage-1 cache
+ * invalidation under nested translation. Userspace uses this structure to
+ * tell host about the impacted caches after modifying the stage-1 page table.
  *
  * @addr, @granule_size and @nb_granules are meaningful when
- * @granularity==IOMMU_VTD_QI_GRAN_ADDR. Intel VT-d currently only supports 4KB
- * page size, so @granule_size should be 4KB. @addr should be aligned with
- * @granule_size * @nb_granules, otherwise invalidation won't take effect.
+ * @granularity==IOMMU_VTD_QI_GRAN_ADDR. Intel VT-d currently only supports
+ * 4kB page size, so @granule_size should be 4KB. @addr should be aligned
+ * with @granule_size * @nb_granules, otherwise invalidation won't take
+ * effect.
  */
 struct iommu_hwpt_invalidate_intel_vtd {
 	__u8 granularity;
