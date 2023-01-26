@@ -6,6 +6,7 @@
 
 #include <linux/types.h>
 #include <linux/ioctl.h>
+#include <linux/iommu.h>
 
 #define IOMMUFD_TYPE (';')
 
@@ -50,6 +51,7 @@ enum {
 	IOMMUFD_CMD_DEVICE_GET_INFO,
 	IOMMUFD_CMD_HWPT_ALLOC,
 	IOMMUFD_CMD_HWPT_INVALIDATE,
+	IOMMUFD_CMD_PAGE_RESPONSE,
 };
 
 /**
@@ -353,11 +355,13 @@ struct iommu_vfio_ioas {
 enum iommu_device_data_type {
 	IOMMU_DEVICE_DATA_NONE = 0,
 	IOMMU_DEVICE_DATA_INTEL_VTD,
+	IOMMU_DEVICE_DATA_ARM_SMMUV3,
 };
 
 enum iommu_pgtbl_types {
 	IOMMU_PGTBL_TYPE_NONE,
 	IOMMU_PGTBL_TYPE_VTD_S1,
+	IOMMU_PGTBL_TYPE_SMMUV3_S1,
 };
 
 /**
@@ -377,6 +381,20 @@ struct iommu_device_info_vtd {
 	__u32 __reserved;
 	__aligned_u64 cap_reg;
 	__aligned_u64 ecap_reg;
+};
+
+/**
+ * struct iommu_device_info_smmuv3 - ARM SMMUv3 device info
+ *
+ * @flags: Must be set to 0
+ * @__reserved: Must be 0
+ * @idr_regs: Information
+ * @idr5: Extended capability register value
+ */
+struct iommu_device_info_smmuv3 {
+	__u32 flags;
+	__u32 __reserved;
+	__u32 idr[6];
 };
 
 /**
@@ -476,6 +494,32 @@ struct iommu_hwpt_intel_vtd {
 };
 
 /**
+ * struct iommu_hwpt_arm_smmuv3 - ARM SMMUv3 specific page table data
+ *
+ * @flags: page table entry attributes
+ * @config: Stream configuration
+ * @s2vmid: Virtual machine identifier
+ * @s1ctxptr: Stage 1 context descriptor pointer
+ * @s1cdmax: Number of CDs pointed to by s1ContextPtr
+ * @s1fmt: Stage 1 Format
+ * @s1dss: Default substream
+ */
+struct iommu_hwpt_arm_smmuv3 {
+#define IOMMU_SMMUV3_FLAG_S2    (1 << 0) /* if unset, stage1 */
+#define IOMMU_SMMUV3_FLAG_VMID  (1 << 1) /* vmid override */
+        __u64 flags;
+#define IOMMU_SMMUV3_CONFIG_TRANSLATE   1
+#define IOMMU_SMMUV3_CONFIG_BYPASS      2
+#define IOMMU_SMMUV3_CONFIG_ABORT       3
+        __u32 config;
+        __u32 s2vmid;
+        __u64 s1ctxptr;
+        __u64 s1cdmax;
+        __u64 s1fmt;
+        __u64 s1dss;
+};
+
+/**
  * struct iommu_hwpt_alloc - ioctl(IOMMU_HWPT_ALLOC)
  * @size: sizeof(struct iommu_hwpt_alloc)
  * @flags: Must be 0
@@ -511,10 +555,32 @@ struct iommu_hwpt_alloc {
 	__u32 data_type;
 	__u32 data_len;
 	__aligned_u64 data_uptr;
+	__s32 eventfd;
 	__u32 out_hwpt_id;
+	__s32 out_fault_fd;
 	__u32 __reserved;
 };
 #define IOMMU_HWPT_ALLOC _IO(IOMMUFD_TYPE, IOMMUFD_CMD_HWPT_ALLOC)
+
+/*
+ * DMA Fault Region Layout
+ * @tail: index relative to the start of the ring buffer at which the
+ *        consumer finds the next item in the buffer
+ * @entry_size: fault ring buffer entry size in bytes
+ * @nb_entries: max capacity of the fault ring buffer
+ * @offset: ring buffer offset relative to the start of the region
+ * @head: index relative to the start of the ring buffer at which the
+ *        producer (kernel) inserts items into the buffers
+ */
+struct iommufd_stage1_dma_fault {
+	/* Write-Only */
+	__u32   tail;
+	/* Read-Only */
+	__u32   entry_size;
+	__u32	nb_entries;
+	__u32	offset;
+	__u32   head;
+};
 
 /**
  * enum iommu_vtd_qi_granularity - Intel VT-d specific granularity of
@@ -571,6 +637,25 @@ struct iommu_hwpt_invalidate_intel_vtd {
 };
 
 /**
+ * struct iommu_hwpt_invalidate_arm_smmuv3 - ARM SMMUv3 cahce invalidation info
+ * @flags: boolean attributes of cache invalidation command
+ * @opcode: opcode of cache invalidation command
+ * @ssid: SubStream ID
+ * @granule_size: page/block size of the mapping in bytes
+ * @range: IOVA range to invalidate
+ */
+struct iommu_hwpt_invalidate_arm_smmuv3 {
+#define IOMMU_SMMUV3_CMDQ_TLBI_VA_LEAF	(1 << 0)
+	__u64 flags;
+	__u8 opcode;
+	__u8 padding[3];
+	__u32 asid;
+	__u32 ssid;
+	__u32 granule_size;
+	struct iommu_iova_range range;
+};
+
+/**
  * struct iommu_hwpt_invalidate - ioctl(IOMMU_HWPT_INVALIDATE)
  * @size: sizeof(struct iommu_hwpt_invalidate)
  * @hwpt_id: HWPT ID of target hardware page table for the invalidation
@@ -598,4 +683,23 @@ struct iommu_hwpt_invalidate {
 	__aligned_u64 data_uptr;
 };
 #define IOMMU_HWPT_INVALIDATE _IO(IOMMUFD_TYPE, IOMMUFD_CMD_HWPT_INVALIDATE)
+
+/**
+ * struct iommu_hwpt_page_response - ioctl(IOMMUFD_CMD_PAGE_RESPONSE)
+ * @size: sizeof(struct iommu_hwpt_page_response)
+ * @flags: must be 0
+ * @hwpt_id: hwpt ID of target hardware page table for the response
+ * @dev_id: device ID of target device for the response
+ * @resp: response info
+ *
+ */
+struct iommu_hwpt_page_response {
+	__u32 size;
+	__u32 flags;
+	__u32 hwpt_id;
+	__u32 dev_id;
+	struct iommu_page_response resp;
+};
+
+#define IOMMU_PAGE_RESPONSE _IO(IOMMUFD_TYPE, IOMMUFD_CMD_PAGE_RESPONSE)
 #endif
