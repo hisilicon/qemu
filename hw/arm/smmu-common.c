@@ -517,8 +517,17 @@ static const PCIIOMMUOps smmu_ops = {
 void smmu_iommu_uninstall_nested_ste(SMMUDevice *sdev)
 {
     SMMUHwpt *hwpt = sdev->hwpt;
+    IOMMUFDDevice *idev;
 
-    if (!sdev || !hwpt) {
+    if (!sdev || !hwpt || !sdev->idev) {
+        return;
+    }
+
+    idev = sdev->idev;
+
+    /* Detach the device first from its current hwpt */
+    if (iommufd_device_detach_hwpt(idev)) {
+        error_report("Unable to detach dev to stage-1 HW pagetable");
         return;
     }
 
