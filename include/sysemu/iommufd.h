@@ -4,7 +4,7 @@
 #include "qom/object.h"
 #include "qemu/thread.h"
 #include "exec/hwaddr.h"
-#include "exec/ram_addr.h"
+#include "exec/cpu-common.h"
 #include <linux/iommufd.h>
 
 #define TYPE_IOMMUFD_BACKEND "iommufd"
