@@ -209,9 +209,7 @@ void vfio_reset_handler(void *opaque);
 int vfio_attach_device(VFIODevice *vbasedev, AddressSpace *as, Error **errp);
 void vfio_detach_device(VFIODevice *vbasedev);
 
-#ifdef CONFIG_KVM
 extern int vfio_kvm_device_fd;
-#endif
 
 int vfio_kvm_device_add_fd(int fd);
 int vfio_kvm_device_del_fd(int fd);
