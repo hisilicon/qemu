@@ -2022,7 +2022,8 @@ int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg,
         kroute.flags = KVM_MSI_VALID_DEVID;
         kroute.u.msi.devid = pci_requester_id(dev);
     }
-    if (kvm_arch_fixup_msi_route(&kroute, msg.address, msg.data, dev)) {
+    if (msg.address &&
+        kvm_arch_fixup_msi_route(&kroute, msg.address, msg.data, dev)) {
         return -EINVAL;
     }
 
