@@ -517,7 +517,13 @@ void smmu_iommu_uninstall_nested_ste(SMMUDevice *sdev)
 {
     SMMUHwpt *hwpt = sdev->hwpt;
 
-    if (!sdev || !hwpt) {
+    if (!sdev || !hwpt || !sdev->idev) {
+        return;
+    }
+
+    /* Detach the device first from its current hwpt */
+    if (iommufd_device_detach_hwpt(sdev->idev)) {
+        error_report("Unable to detach dev to stage-1 HW pagetable");
         return;
     }
 
@@ -555,6 +561,7 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
     sdev->hwpt = hwpt;
 
     hwpt->smmu = sdev->smmu;
+    hwpt->iommufd = idev->iommufd;
 
     ret = iommufd_backend_alloc_hwpt(idev->iommufd, idev->dev_id, idev->hwpt_id,
                                      data_type, data_len, data, &hwpt->hwpt_id);
