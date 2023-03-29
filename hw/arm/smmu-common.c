@@ -474,15 +474,22 @@ static int smmu_dev_set_iommu_device(PCIBus *bus, void *opaque,
     SMMUState *s = opaque;
     SMMUPciBus *sbus = smmu_get_sbus(s, bus);
     SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
+    struct iommu_device_data_arm_smmuv3 dev_data = {
+        .sid = smmu_get_sid(sdev),
+    };
+    int ret;
 
     if (!s->iommufd || s->iommufd->fd < 0) {
         return -ENOENT;
     }
 
+    ret = iommufd_device_set_data(idev, &dev_data, sizeof(dev_data));
+    if (ret) {
+        error_report("failed to set device data");
+    }
     sdev->idev = idev;
     QLIST_INSERT_HEAD(&s->devices_with_notifiers, sdev, next);
     trace_smmu_set_iommu_device(dev->name, smmu_get_sid(sdev));
-
     return 0;
 }
 
@@ -506,6 +513,7 @@ static void smmu_dev_unset_iommu_device(PCIBus *bus, void *opaque,
         return;
     }
 
+    iommufd_device_unset_data(sdev->idev);
     QLIST_REMOVE(sdev, next);
     sdev->idev = NULL;
     trace_smmu_unset_iommu_device(dev->name, smmu_get_sid(sdev));
