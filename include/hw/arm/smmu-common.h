@@ -51,6 +51,13 @@ typedef enum {
     SMMU_PTW_ERR_PERMISSION,  /* Permission fault */
 } SMMUPTWEventType;
 
+/* SMMU Stage */
+typedef enum {
+    SMMU_STAGE_1 = 1,
+    SMMU_STAGE_2,
+    SMMU_NESTED,
+} SMMUStage;
+
 typedef struct SMMUPTWEventInfo {
     int stage;
     SMMUPTWEventType type;
@@ -125,6 +132,12 @@ typedef struct SMMUViommu {
     QLIST_ENTRY(SMMUViommu) next;
 } SMMUViommu;
 
+typedef struct SMMUVdev {
+    SMMUViommu *vsmmu;
+    IOMMUFDVdev *core;
+    uint32_t sid;
+}SMMUVdev;
+
 typedef struct SMMUS1Hwpt {
     void *smmu;
     IOMMUFDBackend *iommufd;
@@ -141,6 +154,7 @@ typedef struct SMMUDevice {
     IOMMUMemoryRegion  iommu;
     HostIOMMUDeviceIOMMUFD *idev;
     SMMUViommu         *viommu;
+    SMMUVdev           *vdev;
     SMMUS1Hwpt         *s1_hwpt;
     AddressSpace       as;
     AddressSpace       as_sysmem;

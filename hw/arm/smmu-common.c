@@ -780,6 +780,7 @@ static bool smmu_dev_set_iommu_device(PCIBus *bus, void *opaque, int devfn,
 
 static void smmu_dev_unset_iommu_device(PCIBus *bus, void *opaque, int devfn)
 {
+    SMMUVdev *vdev;
     SMMUDevice *sdev;
     SMMUViommu *viommu;
     SMMUState *s = opaque;
@@ -803,12 +804,19 @@ static void smmu_dev_unset_iommu_device(PCIBus *bus, void *opaque, int devfn)
         error_report("Unable to attach dev to the default HW pagetable");
     }
 
+    vdev = sdev->vdev;
     viommu = sdev->viommu;
 
     sdev->idev = NULL;
     sdev->viommu = NULL;
     QLIST_REMOVE(sdev, next);
     trace_smmu_unset_iommu_device(devfn, smmu_get_sid(sdev));
+
+    if (vdev) {
+        iommufd_backend_free_id(viommu->iommufd, vdev->core->vdev_id);
+        g_free(vdev->core);
+        g_free(vdev);
+    }
 
     if (QLIST_EMPTY(&viommu->device_list)) {
         iommufd_backend_free_id(viommu->iommufd, viommu->bypass_hwpt_id);
