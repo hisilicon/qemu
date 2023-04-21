@@ -1221,6 +1221,49 @@ static void smmuv3_range_inval(SMMUState *s, Cmd *cmd)
     }
 }
 
+static void smmuv3_config_ste(SMMUDevice *sdev, int sid)
+{
+#ifdef __linux__
+    SMMUEventInfo event = {.type = SMMU_EVT_NONE, .sid = sid,
+                           .inval_ste_allowed = true};
+    struct iommu_hwpt_arm_smmuv3 iommu_config = {};
+    SMMUv3State *s = sdev->smmu;
+    SMMUState *bs = &s->smmu_state;
+    uint32_t config;
+    STE ste;
+    int ret;
+
+    if (!sdev->idev || !bs->iommufd || !bs->nested) {
+        return;
+    }
+
+    ret = smmu_find_ste(sdev->smmu, sid, &ste, &event);
+    if (ret) {
+        error_report("Unable to find Stream Table Entry: %d", ret);
+    }
+
+    config = STE_CONFIG(&ste);
+    if (!STE_VALID(&ste) || !STE_CFG_S1_ENABLED(config)) {
+        smmu_iommu_uninstall_nested_ste(bs, sdev);
+        smmuv3_flush_config(sdev);
+        return;
+    }
+    iommu_config.ste[0] = (uint64_t)ste.word[0] | (uint64_t)ste.word[1] << 32;
+    iommu_config.ste[1] = (uint64_t)ste.word[2] | (uint64_t)ste.word[3] << 32;
+    /* V | S1FMT | S1CTXPTR | S1CDMAX */
+    iommu_config.ste[0] &= 0xf80ffffffffffff1ULL;
+    /* S1DSS | S1CIR | S1COR | S1CSH | S1STALLD | EATS */
+    iommu_config.ste[1] &= 0x580000ffULL;
+    trace_smmuv3_config_ste(sid, iommu_config.ste[0], iommu_config.ste[1]);
+
+    ret = smmu_iommu_install_nested_ste(bs, sdev, IOMMU_HWPT_DATA_ARM_SMMUV3,
+                                        sizeof(iommu_config), &iommu_config);
+    if (ret) {
+        error_report("Unable to alloc Stage-1 HW Page Table: %d", ret);
+    }
+#endif
+}
+
 static gboolean
 smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
 {
@@ -1231,6 +1274,8 @@ smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
     if (sid < sid_range->start || sid > sid_range->end) {
         return false;
     }
+    smmuv3_flush_config(sdev);
+    smmuv3_config_ste(sdev, sid);
     trace_smmuv3_config_cache_inv(sid);
     return true;
 }
@@ -1298,6 +1343,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
 
             trace_smmuv3_cmdq_cfgi_ste(sid);
             smmuv3_flush_config(sdev);
+            smmuv3_config_ste(sdev, sid);
 
             break;
         }
@@ -1313,6 +1359,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             }
 
             mask = (1ULL << (range + 1)) - 1;
+            sid_range.state = bs;
             sid_range.start = sid & ~mask;
             sid_range.end = sid_range.start + mask;
 
