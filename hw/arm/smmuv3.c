@@ -1049,12 +1049,50 @@ smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
     return true;
 }
 
+static int smmuv3_invalidate_cache(SMMUState *s, SMMUQueue *q, uint32_t *cons)
+{
+    hwaddr len = (hwaddr)q->entry_size * (1 << q->log2size);
+    struct iommu_hwpt_invalidate_arm_smmuv3 data = {
+        .cmdq_entry_size = q->entry_size,
+        .cmdq_log2size = q->log2size,
+        .cmdq_prod = q->prod,
+        .cmdq_cons_uptr = (uint64_t)cons,
+    };
+    SMMUDevice *sdev;
+    int ret = -ENODEV;
+    void *buf;
+
+    if (!s->iommufd) {
+	    return -ENODEV;
+    }
+
+    buf = address_space_map(&address_space_memory, Q_BASE(q), &len,
+                            false, MEMTXATTRS_UNSPECIFIED);
+    if (!buf || !len)
+        return -ENOMEM;
+    data.cmdq_uptr = (uint64_t)buf;
+
+    QLIST_FOREACH(sdev, &s->devices_with_notifiers, next) {
+        if (!sdev->hwpt || !sdev->idev)
+            continue;
+        ret = smmu_iommu_invalidate_cache(sdev, sizeof(data), &data);
+        if (ret || data.cmdq_prod != *cons) {
+            error_report("failed to invalidate TLB: ret=%d, prod=0x%x, cons=0x%x",
+                         ret, data.cmdq_prod, *cons);
+        }
+    }
+    address_space_unmap(&address_space_memory, buf, len, false, 0);
+    return ret;
+}
+
 static int smmuv3_cmdq_consume(SMMUv3State *s)
 {
     SMMUState *bs = ARM_SMMU(s);
     SMMUCmdError cmd_error = SMMU_CERROR_NONE;
     SMMUQueue *q = &s->cmdq;
     SMMUCommandType type = 0;
+    uint32_t cons_save;
+    bool report = false;
 
     if (!smmuv3_cmdq_enabled(s)) {
         return 0;
@@ -1066,6 +1104,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
      * or old value.
      */
 
+    cons_save = q->cons;
     while (!smmuv3_q_empty(q)) {
         uint32_t pending = s->gerror ^ s->gerrorn;
         Cmd cmd;
@@ -1149,6 +1188,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_cfgi_cd(sid);
             sdev = container_of(mr, SMMUDevice, iommu);
             smmuv3_flush_config(sdev);
+            report = true;
             break;
         }
         case SMMU_CMD_TLBI_NH_ASID:
@@ -1158,6 +1198,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nh_asid(asid);
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_asid(bs, asid);
+            report = true;
             break;
         }
         case SMMU_CMD_TLBI_NH_ALL:
@@ -1165,10 +1206,15 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nh();
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_all(bs);
+            report = true;
             break;
         case SMMU_CMD_TLBI_NH_VAA:
         case SMMU_CMD_TLBI_NH_VA:
             smmuv3_s1_range_inval(bs, &cmd);
+            report = true;
+            break;
+        case SMMU_CMD_ATC_INV:
+            report = true;
             break;
         case SMMU_CMD_TLBI_EL3_ALL:
         case SMMU_CMD_TLBI_EL3_VA:
@@ -1178,7 +1224,6 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_TLBI_EL2_VAA:
         case SMMU_CMD_TLBI_S12_VMALL:
         case SMMU_CMD_TLBI_S2_IPA:
-        case SMMU_CMD_ATC_INV:
         case SMMU_CMD_PRI_RESP:
         case SMMU_CMD_RESUME:
         case SMMU_CMD_STALL_TERM:
@@ -1200,6 +1245,10 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
          * and does not check the completion of previous commands
          */
         queue_cons_incr(q);
+    }
+    if (report && !smmuv3_invalidate_cache(bs, q, &cons_save)) {
+        smmu_write_cmdq_err(s, cons_save >> 24);
+        q->cons = cons_save;
     }
 
     if (cmd_error) {
