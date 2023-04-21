@@ -126,6 +126,7 @@ typedef struct SMMUDevice {
     uint32_t           cfg_cache_hits;
     uint32_t           cfg_cache_misses;
     struct iommu_hw_info_arm_smmuv3 info;
+    uint32_t           ste[16];
     QLIST_ENTRY(SMMUDevice) next;
 } SMMUDevice;
 
