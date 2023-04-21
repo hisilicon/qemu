@@ -1357,16 +1357,85 @@ static void smmuv3_invalidate_nested_ste(SMMUSIDRange *sid_range)
     }
 }
 
+/**
+ * SMMUCommandBatch - batch of commands to issue for nested SMMU invalidation
+ * @cmds: Pointer to list of commands
+ * @cons: Pointer to list of CONS corresponding to the commands
+ * @ncmds: Total ncmds in the batch
+ * @dev_cache: Issue to a device cache
+ */
+typedef struct SMMUCommandBatch {
+    Cmd *cmds;
+    uint32_t *cons;
+    uint32_t ncmds;
+    bool dev_cache;
+} SMMUCommandBatch;
+
+/* Update batch->ncmds to the number of execute cmds */
+static int smmuv3_issue_cmd_batch(SMMUState *bs, SMMUCommandBatch *batch)
+{
+    uint32_t total = batch->ncmds;
+    int ret;
+
+    ret = smmu_viommu_invalidate_cache(bs->viommu->core,
+                                       IOMMU_VIOMMU_INVALIDATE_DATA_ARM_SMMUV3,
+                                       sizeof(Cmd), &batch->ncmds, batch->cmds);
+    if (total != batch->ncmds) {
+        error_report("%s failed: ret=%d, total=%d, done=%d",
+                      __func__, ret, total, batch->ncmds);
+        return ret;
+    }
+
+    batch->ncmds = 0;
+    batch->dev_cache = false;
+    return ret;
+}
+
+static int smmuv3_batch_cmds(SMMUState *bs, SMMUCommandBatch *batch,
+                             Cmd *cmd, uint32_t *cons, bool dev_cache)
+{
+    int ret;
+
+    if (!bs->nested || !bs->viommu) {
+        return 0;
+    }
+
+    /*
+     * Currently separate dev_cache and hwpt for safety, which might not be
+     * necessary if underlying HW SMMU does not have the errata.
+     *
+     * TODO check IIDR register values read from hw_info.
+     */
+    if (batch->ncmds && (dev_cache != batch->dev_cache)) {
+        ret = smmuv3_issue_cmd_batch(bs, batch);
+        if (ret) {
+            *cons = batch->cons[batch->ncmds];
+            return ret;
+        }
+    }
+    batch->dev_cache = dev_cache;
+    batch->cmds[batch->ncmds] = *cmd;
+    batch->cons[batch->ncmds++] = *cons;
+    return 0;
+}
+
 static int smmuv3_cmdq_consume(SMMUv3State *s)
 {
     SMMUState *bs = ARM_SMMU(s);
     SMMUCmdError cmd_error = SMMU_CERROR_NONE;
     SMMUQueue *q = &s->cmdq;
     SMMUCommandType type = 0;
+    SMMUCommandBatch batch = {};
+    uint32_t ncmds = 0;
 
     if (!smmuv3_cmdq_enabled(s)) {
         return 0;
     }
+
+    ncmds = smmuv3_q_ncmds(q);
+    batch.cmds = g_new0(Cmd, ncmds);
+    batch.cons = g_new0(uint32_t, ncmds);
+
     /*
      * some commands depend on register values, typically CR0. In case those
      * register values change while handling the command, spec says it
@@ -1463,6 +1532,13 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
 
             trace_smmuv3_cmdq_cfgi_cd(sid);
             smmuv3_flush_config(sdev);
+
+            if (sdev->s1_hwpt) {
+                if (smmuv3_batch_cmds(sdev->smmu, &batch, &cmd, &q->cons, true)) {
+                    cmd_error = SMMU_CERROR_ILL;
+                    break;
+                }
+            }
             break;
         }
         case SMMU_CMD_TLBI_NH_ASID:
@@ -1477,6 +1553,10 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nh_asid(asid);
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_asid(bs, asid);
+            if (smmuv3_batch_cmds(bs, &batch, &cmd, &q->cons, false)) {
+                cmd_error = SMMU_CERROR_ILL;
+                break;
+            }
             break;
         }
         case SMMU_CMD_TLBI_NH_ALL:
@@ -1489,6 +1569,11 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nh();
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_all(bs);
+
+            if (smmuv3_batch_cmds(bs, &batch, &cmd, &q->cons, false)) {
+                cmd_error = SMMU_CERROR_ILL;
+                break;
+            }
             break;
         case SMMU_CMD_TLBI_NH_VAA:
         case SMMU_CMD_TLBI_NH_VA:
@@ -1497,7 +1582,24 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
                 break;
             }
             smmuv3_range_inval(bs, &cmd);
+
+            if (smmuv3_batch_cmds(bs, &batch, &cmd, &q->cons, false)) {
+                cmd_error = SMMU_CERROR_ILL;
+                break;
+            }
             break;
+        case SMMU_CMD_ATC_INV:
+        {
+            SMMUDevice *sdev = smmu_find_sdev(bs, CMD_SID(&cmd));
+
+            if (sdev->s1_hwpt) {
+                if (smmuv3_batch_cmds(sdev->smmu, &batch, &cmd, &q->cons, true)) {
+                    cmd_error = SMMU_CERROR_ILL;
+                    break;
+                }
+            }
+            break;
+        }
         case SMMU_CMD_TLBI_S12_VMALL:
         {
             uint16_t vmid = CMD_VMID(&cmd);
@@ -1529,7 +1631,6 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_TLBI_EL2_ASID:
         case SMMU_CMD_TLBI_EL2_VA:
         case SMMU_CMD_TLBI_EL2_VAA:
-        case SMMU_CMD_ATC_INV:
         case SMMU_CMD_PRI_RESP:
         case SMMU_CMD_RESUME:
         case SMMU_CMD_STALL_TERM:
@@ -1554,12 +1655,22 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
          */
         queue_cons_incr(q);
     }
+    qemu_mutex_lock(&s->mutex);
+    if (!cmd_error && batch.ncmds && bs->viommu) {
+        if (smmuv3_issue_cmd_batch(bs, &batch)) {
+            q->cons = batch.cons[batch.ncmds];
+            cmd_error = SMMU_CERROR_ILL;
+        }
+    }
+    qemu_mutex_unlock(&s->mutex);
 
     if (cmd_error) {
         trace_smmuv3_cmdq_consume_error(smmu_cmd_string(type), cmd_error);
         smmu_write_cmdq_err(s, cmd_error);
         smmuv3_trigger_irq(s, SMMU_IRQ_GERROR, R_GERROR_CMDQ_ERR_MASK);
     }
+    g_free(batch.cmds);
+    g_free(batch.cons);
 
     trace_smmuv3_cmdq_consume_out(Q_PROD(q), Q_CONS(q),
                                   Q_PROD_WRAP(q), Q_CONS_WRAP(q));
