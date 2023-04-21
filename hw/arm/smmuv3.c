@@ -1280,16 +1280,48 @@ smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
     return true;
 }
 
+static int smmuv3_invalidate_cache(SMMUState *s, Cmd *cmds, uint32_t *ncmds, uint32_t *cmd_error)
+{
+    SMMUDevice *sdev;
+    uint32_t ntlbi;
+    int ret = 0;
+
+    if (!s->nested) {
+        return 0;
+    }
+
+    QLIST_FOREACH(sdev, &s->devices_with_nesting, next) {
+        if (!sdev->hwpt || !sdev->idev)
+            continue;
+        ntlbi = *ncmds;
+        ret = smmu_iommu_invalidate_cache(sdev, IOMMU_HWPT_DATA_ARM_SMMUV3,
+                                          sizeof(*cmds), ncmds, cmds);
+        if (ret || ntlbi != *ncmds || *cmd_error) {
+            error_report("%s failed: ret=%d, ntlbi=%d, done=%d, error=0x%x",
+                         __func__, ret, ntlbi, *ncmds, *cmd_error);
+        }
+    }
+    return ret;
+}
+
 static int smmuv3_cmdq_consume(SMMUv3State *s)
 {
     SMMUState *bs = ARM_SMMU(s);
     SMMUCmdError cmd_error = SMMU_CERROR_NONE;
     SMMUQueue *q = &s->cmdq;
     SMMUCommandType type = 0;
+    uint32_t ncmds, ntlbi = 0;
+    uint32_t *cons_list;
+    Cmd *cmds;
 
     if (!smmuv3_cmdq_enabled(s)) {
         return 0;
     }
+
+    ncmds = smmuv3_q_ncmds(q);
+    cmds = g_malloc0(sizeof(*cmds) * ncmds);
+    cons_list = g_malloc0(sizeof(*cons_list) * ncmds);
+
     /*
      * some commands depend on register values, typically CR0. In case those
      * register values change while handling the command, spec says it
@@ -1385,6 +1417,10 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
 
             trace_smmuv3_cmdq_cfgi_cd(sid);
             smmuv3_flush_config(sdev);
+            if (sdev->hwpt) {
+                cons_list[ntlbi] = q->cons;
+                cmds[ntlbi++] = cmd;
+            }
             break;
         }
         case SMMU_CMD_TLBI_NH_ASID:
@@ -1399,6 +1435,8 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nh_asid(asid);
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_asid(bs, asid);
+            cons_list[ntlbi] = q->cons;
+            cmds[ntlbi++] = cmd;
             break;
         }
         case SMMU_CMD_TLBI_NH_ALL:
@@ -1411,6 +1449,8 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nh();
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_all(bs);
+            cons_list[ntlbi] = q->cons;
+            cmds[ntlbi++] = cmd;
             break;
         case SMMU_CMD_TLBI_NH_VAA:
         case SMMU_CMD_TLBI_NH_VA:
@@ -1419,7 +1459,19 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
                 break;
             }
             smmuv3_range_inval(bs, &cmd);
+            cons_list[ntlbi] = q->cons;
+            cmds[ntlbi++] = cmd;
             break;
+        case SMMU_CMD_ATC_INV:
+        {
+            uint32_t sid = CMD_SID(&cmd);
+            SMMUDevice *sdev = smmu_find_sdev(bs, sid);
+            if (sdev->hwpt) {
+                cons_list[ntlbi] = q->cons;
+                cmds[ntlbi++] = cmd;
+	    }
+            break;
+	}
         case SMMU_CMD_TLBI_S12_VMALL:
         {
             uint16_t vmid = CMD_VMID(&cmd);
@@ -1451,7 +1503,6 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_TLBI_EL2_ASID:
         case SMMU_CMD_TLBI_EL2_VA:
         case SMMU_CMD_TLBI_EL2_VAA:
-        case SMMU_CMD_ATC_INV:
         case SMMU_CMD_PRI_RESP:
         case SMMU_CMD_RESUME:
         case SMMU_CMD_STALL_TERM:
@@ -1476,12 +1527,18 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
          */
         queue_cons_incr(q);
     }
+    if (!cmd_error && ntlbi &&
+        smmuv3_invalidate_cache(bs, cmds, &ntlbi, &cmd_error)) {
+        q->cons = cons_list[ntlbi];
+    }
 
     if (cmd_error) {
         trace_smmuv3_cmdq_consume_error(smmu_cmd_string(type), cmd_error);
         smmu_write_cmdq_err(s, cmd_error);
         smmuv3_trigger_irq(s, SMMU_IRQ_GERROR, R_GERROR_CMDQ_ERR_MASK);
     }
+    g_free(cons_list);
+    g_free(cmds);
 
     trace_smmuv3_cmdq_consume_out(Q_PROD(q), Q_CONS(q),
                                   Q_PROD_WRAP(q), Q_CONS_WRAP(q));
