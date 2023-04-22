@@ -3388,6 +3388,9 @@ static void vfio_exitfn(PCIDevice *pdev)
     if (vdev->irqchip_change_notifier.notify) {
         kvm_irqchip_remove_change_notifier(&vdev->irqchip_change_notifier);
     }
+    if (vdev->vbasedev.iommufd) {
+        pci_device_unset_iommu_device(pdev);
+    }
     vfio_disable_interrupts(vdev);
     if (vdev->intx.mmap_timer) {
         timer_free(vdev->intx.mmap_timer);

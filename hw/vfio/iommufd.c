@@ -539,6 +539,7 @@ static void iommufd_detach_device(VFIODevice *vbasedev)
 found:
     QLIST_REMOVE(vbasedev, next);
     if (QLIST_EMPTY(&hwpt->device_list)) {
+        iommufd_backend_free_id(vbasedev->iommufd->fd, hwpt->hwpt_id);
         vfio_container_put_hwpt(hwpt);
     }
 
