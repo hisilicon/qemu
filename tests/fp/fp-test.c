@@ -168,6 +168,7 @@ static bool is_allowed(unsigned op, int rmode)
     return true;
 }
 
+static int verCases_verbosity = 0;
 static void do_testfloat(int op, int rmode, bool exact)
 {
     abz_f16 true_abz_f16;
