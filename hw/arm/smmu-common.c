@@ -27,6 +27,7 @@
 #include "qemu/module.h"
 
 #include "sysemu/iommufd_device.h"
+#include "sysemu/iommufd.h"
 
 #include "qemu/error-report.h"
 #include "hw/arm/smmu-common.h"
@@ -539,7 +540,10 @@ void smmu_iommu_uninstall_nested_ste(SMMUDevice *sdev)
         return;
     }
 
+    qemu_set_fd_handler(hwpt->eventfd, NULL, NULL, hwpt);
+    close(hwpt->fault_fd);
     iommufd_backend_free_id(hwpt->iommufd, hwpt->hwpt_id);
+    event_notifier_cleanup(&hwpt->notifier);
     g_free(hwpt);
     sdev->hwpt = NULL;
 }
@@ -547,11 +551,12 @@ void smmu_iommu_uninstall_nested_ste(SMMUDevice *sdev)
 /* IOMMUFD helpers */
 int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
                                   uint32_t data_type, uint32_t data_len,
-                                  void *data)
+                                  void *data, IOHandler *handler)
 {
     SMMUHwpt *hwpt = sdev->hwpt;
     IOMMUFDDevice *idev;
-    int ret;
+    EventNotifier *n;
+    int ret, fd, fault_data_fd;
 
     if (!s || !sdev || !s->iommufd || s->iommufd->fd < 0) {
         return -ENOENT;
@@ -573,10 +578,22 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
     sdev->hwpt = hwpt;
 
     hwpt->smmu = sdev->smmu;
+    hwpt->sdev = sdev;
     hwpt->iommufd = idev->iommufd;
 
+    n = &hwpt->notifier;
+    ret = event_notifier_init(n, 0);
+    if (ret) {
+        error_report("vtd: Unable to init event notifier for dma fault (%d)",
+                     ret);
+        goto free;
+    }
+
+    fd = event_notifier_get_fd(n);
+
     ret = iommufd_backend_alloc_hwpt(idev->iommufd, idev->dev_id, idev->hwpt_id,
-                                     data_type, data_len, data, &hwpt->hwpt_id);
+                                     data_type, data_len, data, fd,
+                                     &hwpt->hwpt_id, &fault_data_fd);
     if (ret) {
         error_report("Unable to allocate stage-1 HW pagetable: %d", ret);
         goto free;
@@ -588,6 +605,11 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
         error_report("Unable to attach dev to stage-1 HW pagetable: %d", ret);
         goto free_hwpt;
     }
+
+    hwpt->eventfd = fd;
+    hwpt->fault_fd = fault_data_fd;
+    hwpt->fault_tail_index = 0;
+    qemu_set_fd_handler(fd, handler, NULL, hwpt);
 
     ret = iommufd_device_attach_hwpt(idev, hwpt->hwpt_id);
     if (ret) {
