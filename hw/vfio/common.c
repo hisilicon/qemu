@@ -364,21 +364,26 @@ bool vfio_mig_active(void)
 static Error *multiple_devices_migration_blocker;
 static Error *giommu_migration_blocker;
 
-static unsigned int vfio_migratable_device_num(void)
+static bool vfio_migratable_device_block_reqd(void)
 {
     VFIOGroup *group;
     VFIODevice *vbasedev;
     unsigned int device_num = 0;
+    bool found_p2p_capable = false;
 
     QLIST_FOREACH(group, &vfio_group_list, next) {
         QLIST_FOREACH(vbasedev, &group->device_list, next) {
             if (vbasedev->migration) {
                 device_num++;
+
+                if (vbasedev->migration->flags & VFIO_MIGRATION_P2P) {
+                    found_p2p_capable = true;
+                }
             }
         }
     }
 
-    return device_num;
+    return (device_num > 1 && found_p2p_capable) ? true : false;
 }
 
 int vfio_block_multiple_devices_migration(Error **errp)
@@ -386,7 +391,7 @@ int vfio_block_multiple_devices_migration(Error **errp)
     int ret;
 
     if (multiple_devices_migration_blocker ||
-        vfio_migratable_device_num() <= 1) {
+        !vfio_migratable_device_block_reqd()) {
         return 0;
     }
 
@@ -405,7 +410,7 @@ int vfio_block_multiple_devices_migration(Error **errp)
 void vfio_unblock_multiple_devices_migration(void)
 {
     if (!multiple_devices_migration_blocker ||
-        vfio_migratable_device_num() > 1) {
+        vfio_migratable_device_block_reqd()) {
         return;
     }
 

@@ -599,6 +599,7 @@ static int vfio_migration_init(VFIODevice *vbasedev)
 
     vbasedev->migration = g_new0(VFIOMigration, 1);
     migration = vbasedev->migration;
+    migration->flags = mig_flags;
     migration->vbasedev = vbasedev;
     migration->device_state = VFIO_DEVICE_STATE_RUNNING;
     migration->data_fd = -1;
