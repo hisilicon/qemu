@@ -308,7 +308,7 @@ static int smmu_ptw_64(SMMUTransCfg *cfg,
         uint32_t offset = iova_level_offset(iova, inputsize, level, granule_sz);
         uint64_t pte, gpa;
         dma_addr_t pte_addr = baseaddr + offset * sizeof(pte);
-        uint8_t ap;
+        uint8_t ap, dbm;
 
         if (get_pte(baseaddr, offset, &pte, info)) {
                 goto error;
@@ -346,9 +346,15 @@ static int smmu_ptw_64(SMMUTransCfg *cfg,
                                      block_size >> 20);
         }
         ap = PTE_AP(pte);
-        if (is_permission_fault(ap, perm)) {
+	dbm = PTE_DBM(pte);
+        if (is_permission_fault(ap, perm) && !dbm) {
             info->type = SMMU_PTW_ERR_PERMISSION;
             goto error;
+        }
+
+	/* Hack for PTE_AP_TO_PERM(ap) below */
+        if (dbm && (ap & 0x2)) {
+            ap = 0x01;
         }
 
         tlbe->entry.translated_addr = gpa;

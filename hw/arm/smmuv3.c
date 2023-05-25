@@ -271,6 +271,7 @@ static void smmuv3_init_regs(SMMUv3State *s)
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, S1P, 1); /* stage 1 supported */
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, TTF, 2); /* AArch64 PTW only */
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, COHACC, 1); /* IO coherent */
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, HTTU, 2); /* HTTU  HD and HA*/
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, BTM, 1); /* IO coherent */
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, ASID16, 1); /* 16-bit ASID */
     s->idr[0] = FIELD_DP32(s->idr[0], IDR0, TTENDIAN, 2); /* little endian */
@@ -552,9 +553,6 @@ static int decode_cd(SMMUv3State *s, SMMUTransCfg *cfg, CD *cd,
     }
     if (!CD_A(cd)) {
         goto bad_cd; /* SMMU_IDR0.TERM_MODEL == 1 */
-    }
-    if (CD_HA(cd) || CD_HD(cd)) {
-        goto bad_cd; /* HTTU = 0 */
     }
 
     /* we support only those at the moment */

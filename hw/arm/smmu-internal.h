@@ -63,6 +63,9 @@
 #define PTE_AP(pte) \
     (extract64(pte, 6, 2))
 
+#define PTE_DBM(pte) \
+    (extract64(pte, 51, 1))
+
 #define PTE_APTABLE(pte) \
     (extract64(pte, 61, 2))
 
