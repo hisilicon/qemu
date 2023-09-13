@@ -25,6 +25,7 @@ struct IOMMUFDBackend {
     /*< protected >*/
     int fd;            /* /dev/iommu file descriptor */
     bool owned;        /* is the /dev/iommu opened internally */
+    bool hugepages;    /* are hugepages enabled on the IOAS */
     QemuMutex lock;
     uint32_t users;
 

@@ -29,6 +29,7 @@ static void iommufd_backend_init(Object *obj)
     be->fd = -1;
     be->users = 0;
     be->owned = true;
+    be->hugepages = 1;
     qemu_mutex_init(&be->lock);
 }
 
@@ -59,9 +60,22 @@ static void iommufd_backend_set_fd(Object *obj, const char *str, Error **errp)
     trace_iommu_backend_set_fd(be->fd);
 }
 
+static void iommufd_backend_set_hugepages(Object *obj, bool enabled, Error **errp)
+{
+    IOMMUFDBackend *be = IOMMUFD_BACKEND(obj);
+
+    qemu_mutex_lock(&be->lock);
+    be->hugepages = enabled;
+    qemu_mutex_unlock(&be->lock);
+}
+
 static void iommufd_backend_class_init(ObjectClass *oc, void *data)
 {
     object_class_property_add_str(oc, "fd", NULL, iommufd_backend_set_fd);
+
+    object_class_property_add_bool(oc, "hugepages", NULL, iommufd_backend_set_hugepages);
+    object_class_property_set_description(oc, "hugepages",
+        "Set to 'off' to disable hugepages");
 }
 
 int iommufd_backend_connect(IOMMUFDBackend *be, Error **errp)
@@ -107,6 +121,28 @@ out:
     qemu_mutex_unlock(&be->lock);
 }
 
+static int iommufd_backend_set_option(int fd, uint32_t object_id,
+                                      enum iommufd_option option_id,
+                                      uint64_t val64)
+{
+    int ret;
+    struct iommu_option option = {
+        .size = sizeof(option),
+        .option_id = option_id,
+        .op = IOMMU_OPTION_OP_SET,
+        .val64 = val64,
+        .object_id = object_id,
+    };
+
+    ret = ioctl(fd, IOMMU_OPTION, &option);
+    if (ret) {
+        error_report("Failed to set option %x to value %"PRIx64" %m", option_id, val64);
+    }
+    trace_iommufd_backend_set_option(fd, object_id, option_id, val64, ret);
+
+    return ret;
+}
+
 static int iommufd_backend_alloc_ioas(int fd, uint32_t *ioas_id)
 {
     int ret;
@@ -146,6 +182,11 @@ int iommufd_backend_get_ioas(IOMMUFDBackend *be, uint32_t *ioas_id)
     int ret;
 
     ret = iommufd_backend_alloc_ioas(be->fd, ioas_id);
+    if (!ret && !be->hugepages) {
+        iommufd_backend_set_option(be->fd, *ioas_id,
+                                   IOMMU_OPTION_HUGE_PAGES, 0);
+    }
+
     trace_iommufd_backend_get_ioas(be->fd, *ioas_id, ret);
     return ret;
 }
