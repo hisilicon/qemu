@@ -220,6 +220,7 @@ extern const PropertyInfo qdev_prop_nv_gpudirect_clique;
 
 int vfio_pci_get_pci_hot_reset_info(VFIOPCIDevice *vdev,
                                     struct vfio_pci_hot_reset_info **info_p);
+int vfio_legacy_pci_hot_reset(VFIODevice *vbasedev, bool single);
 
 int vfio_populate_vga(VFIOPCIDevice *vdev, Error **errp);
 

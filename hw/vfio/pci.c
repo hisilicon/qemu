@@ -2483,8 +2483,9 @@ int vfio_pci_get_pci_hot_reset_info(VFIOPCIDevice *vdev,
     return 0;
 }
 
-static int vfio_pci_hot_reset(VFIOPCIDevice *vdev, bool single)
+int vfio_legacy_pci_hot_reset(VFIODevice *vbasedev, bool single)
 {
+    VFIOPCIDevice *vdev = container_of(vbasedev, VFIOPCIDevice, vbasedev);
     VFIOGroup *group;
     struct vfio_pci_hot_reset_info *info = NULL;
     struct vfio_pci_dependent_device *devices;
@@ -2645,6 +2646,14 @@ out_single:
     g_free(info);
 
     return ret;
+}
+
+static int vfio_pci_hot_reset(VFIOPCIDevice *vdev, bool single)
+{
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    const VFIOIOMMUOps *ops = vbasedev->bcontainer->ops;
+
+    return ops->pci_hot_reset(vbasedev, single);
 }
 
 /*
