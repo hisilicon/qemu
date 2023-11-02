@@ -1504,7 +1504,7 @@ int vfio_attach_device(char *name, VFIODevice *vbasedev,
 {
     const VFIOIOMMUOps *ops;
 
-#ifdef CONFIG_IOMMUFD
+#if defined(CONFIG_IOMMUFD) && !defined(TARGET_PPC)
     if (vbasedev->iommufd) {
         ops = &vfio_iommufd_ops;
     } else

@@ -8,7 +8,7 @@ vfio_ss.add(files(
   'migration.c',
 ))
 if have_iommufd
-  vfio_ss.add(files('iommufd.c'))
+  vfio_ss.add(when: 'TARGET_PPC', if_false: files('iommufd.c'))
 endif
 vfio_ss.add(when: 'CONFIG_VFIO_PCI', if_true: files(
   'display.c',
