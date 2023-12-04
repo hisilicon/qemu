@@ -109,6 +109,7 @@ struct pasid_key {
 struct VTDIOASContainer {
     IOMMUFDBackend *iommufd;
     uint32_t ioas_id;
+    uint32_t errata;
     MemoryListener listener;
     QLIST_HEAD(, VTDS2Hwpt) hwpt_list;
     QLIST_ENTRY(VTDIOASContainer) next;
@@ -201,6 +202,7 @@ struct VTDIOMMUFDDevice {
     PCIBus *bus;
     uint8_t devfn;
     IOMMUFDDevice *idev;
+    uint32_t errata;
     IntelIOMMUState *iommu_state;
     QLIST_ENTRY(VTDIOMMUFDDevice) next;
 };

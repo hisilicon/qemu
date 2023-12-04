@@ -2567,7 +2567,8 @@ static void vtd_context_global_invalidate(IntelIOMMUState *s)
     vtd_pasid_cache_sync(s, &pc_info);
 }
 
-static bool iommufd_listener_skipped_section(MemoryRegionSection *section)
+static bool iommufd_listener_skipped_section(VTDIOASContainer *container,
+                                             MemoryRegionSection *section)
 {
     return !memory_region_is_ram(section->mr) ||
            memory_region_is_protected(section->mr) ||
@@ -2577,7 +2578,8 @@ static bool iommufd_listener_skipped_section(MemoryRegionSection *section)
             * are never accessed by the CPU and beyond the address width of
             * some IOMMU hardware.  TODO: VFIO should tell us the IOMMU width.
             */
-           section->offset_within_address_space & (1ULL << 63);
+           section->offset_within_address_space & (1ULL << 63) ||
+           (container->errata && section->readonly);
 }
 
 static void iommufd_listener_region_add_s2domain(MemoryListener *listener,
@@ -2593,7 +2595,7 @@ static void iommufd_listener_region_add_s2domain(MemoryListener *listener,
     Error *err = NULL;
     int ret;
 
-    if (iommufd_listener_skipped_section(section)) {
+    if (iommufd_listener_skipped_section(container, section)) {
         return;
     }
     iova = REAL_HOST_PAGE_ALIGN(section->offset_within_address_space);
@@ -2644,7 +2646,7 @@ static void iommufd_listener_region_del_s2domain(MemoryListener *listener,
     Int128 llend, llsize;
     int ret;
 
-    if (iommufd_listener_skipped_section(section)) {
+    if (iommufd_listener_skipped_section(container, section)) {
         return;
     }
     iova = REAL_HOST_PAGE_ALIGN(section->offset_within_address_space);
@@ -2914,7 +2916,8 @@ static int vtd_device_attach_iommufd(VTDIOMMUFDDevice *vtd_idev,
 
     /* try to attach to an existing container in this space */
     QLIST_FOREACH(container, &s->containers, next) {
-        if (container->iommufd != iommufd) {
+        if (container->iommufd != iommufd ||
+            container->errata != vtd_idev->errata) {
             continue;
         }
 
@@ -2941,6 +2944,7 @@ static int vtd_device_attach_iommufd(VTDIOMMUFDDevice *vtd_idev,
     container = g_malloc0(sizeof(*container));
     container->iommufd = iommufd;
     container->ioas_id = ioas_id;
+    container->errata = vtd_idev->errata;
     QLIST_INIT(&container->hwpt_list);
 
     if (vtd_device_attach_container(vtd_idev, container,
@@ -5799,10 +5803,11 @@ static bool vtd_sync_hw_info(IntelIOMMUState *s, struct iommu_hw_info_vtd *vtd,
  * could bind guest page table to host.
  */
 static bool vtd_check_idev(IntelIOMMUState *s, IOMMUFDDevice *idev,
-                           Error **errp)
+                           uint32_t *flags, Error **errp)
 {
     struct iommu_hw_info_vtd vtd;
     enum iommu_hw_info_type type = IOMMU_HW_INFO_TYPE_INTEL_VTD;
+    bool passed;
 
     if (iommufd_device_get_info(idev, &type, sizeof(vtd), &vtd)) {
         error_setg(errp, "Failed to get IOMMU capability!!!");
@@ -5814,7 +5819,11 @@ static bool vtd_check_idev(IntelIOMMUState *s, IOMMUFDDevice *idev,
         return false;
     }
 
-    return vtd_sync_hw_info(s, &vtd, errp);
+    passed = vtd_sync_hw_info(s, &vtd, errp);
+    if (passed) {
+        *flags = vtd.flags;
+    }
+    return passed;
 }
 
 static int vtd_dev_set_iommu_device(PCIBus *bus, void *opaque, int32_t devfn,
@@ -5827,6 +5836,7 @@ static int vtd_dev_set_iommu_device(PCIBus *bus, void *opaque, int32_t devfn,
         .devfn = devfn,
     };
     struct vtd_as_key *new_key;
+    uint32_t flags;
 
     assert(0 <= devfn && devfn < PCI_DEVFN_MAX);
 
@@ -5841,7 +5851,7 @@ static int vtd_dev_set_iommu_device(PCIBus *bus, void *opaque, int32_t devfn,
 
     vtd_iommu_lock(s);
 
-    if (!vtd_check_idev(s, idev, errp)) {
+    if (!vtd_check_idev(s, idev, &flags, errp)) {
         vtd_iommu_unlock(s);
         return -ENOENT;
     }
@@ -5859,6 +5869,7 @@ static int vtd_dev_set_iommu_device(PCIBus *bus, void *opaque, int32_t devfn,
     vtd_idev->devfn = (uint8_t)devfn;
     vtd_idev->iommu_state = s;
     vtd_idev->idev = idev;
+    vtd_idev->errata = flags & IOMMU_HW_INFO_VTD_ERRATA_772415_SPR17;
     QLIST_INSERT_HEAD(&s->vtd_idev_list, vtd_idev, next);
 
     g_hash_table_insert(s->vtd_iommufd_dev, new_key, vtd_idev);
