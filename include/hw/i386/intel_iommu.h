@@ -65,6 +65,9 @@ typedef struct VTDPASIDEntry VTDPASIDEntry;
 typedef struct VTDIOMMUFDDevice VTDIOMMUFDDevice;
 typedef struct VTDPASIDCacheEntry VTDPASIDCacheEntry;
 typedef struct VTDPASIDAddressSpace VTDPASIDAddressSpace;
+typedef struct VTDHwpt VTDHwpt;
+typedef struct VTDIOASContainer VTDIOASContainer;
+typedef struct VTDS2Hwpt VTDS2Hwpt;
 
 /* Context-Entry */
 struct VTDContextEntry {
@@ -102,14 +105,37 @@ struct pasid_key {
     uint16_t sid;
 };
 
+struct VTDIOASContainer {
+    IOMMUFDBackend *iommufd;
+    uint32_t ioas_id;
+    MemoryListener listener;
+    QLIST_HEAD(, VTDS2Hwpt) hwpt_list;
+    QLIST_ENTRY(VTDIOASContainer) next;
+    Error *error;
+};
+
+struct VTDS2Hwpt {
+    uint32_t users;
+    uint32_t hwpt_id;
+    VTDIOASContainer *container;
+    QLIST_ENTRY(VTDS2Hwpt) next;
+};
+
+struct VTDHwpt {
+    uint32_t hwpt_id;
+    VTDS2Hwpt *s2_hwpt;
+};
+
 struct VTDPASIDCacheEntry {
     struct VTDPASIDEntry pasid_entry;
+    bool cache_filled;
 };
 
 struct VTDPASIDAddressSpace {
     PCIBus *bus;
     uint8_t devfn;
     uint32_t pasid;
+    VTDHwpt hwpt;
     IntelIOMMUState *iommu_state;
     VTDContextCacheEntry context_cache_entry;
     QLIST_ENTRY(VTDPASIDAddressSpace) next;
@@ -329,7 +355,11 @@ struct IntelIOMMUState {
     /* list of VTDIOMMUFDDevices */
     QLIST_HEAD(, VTDIOMMUFDDevice) vtd_idev_list;
 
+    QLIST_HEAD(, VTDIOASContainer) containers;
+
     GHashTable *vtd_iommufd_dev;             /* VTDIOMMUFDDevice */
+
+    VTDHwpt *s2_hwpt;
 
     /* interrupt remapping */
     bool intr_enabled;              /* Whether guest enabled IR */
