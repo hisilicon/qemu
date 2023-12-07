@@ -121,6 +121,7 @@ typedef struct SMMUDevice {
     IOMMUMemoryRegion  iommu;
     IOMMUFDDevice      *idev;
     AddressSpace       as;
+    AddressSpace       as_sysmem;
     uint32_t           cfg_cache_hits;
     uint32_t           cfg_cache_misses;
     QLIST_ENTRY(SMMUDevice) next;
@@ -143,7 +144,9 @@ struct SMMUState {
     /* <private> */
     SysBusDevice  dev;
     const char *mrtypename;
+    MemoryRegion root;
     MemoryRegion iomem;
+    MemoryRegion sysmem;
     /* /dev/iommu interface */
     IOMMUFDBackend *iommufd;
     SMMUHwpt *s2_hwpt;

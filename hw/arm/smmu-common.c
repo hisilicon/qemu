@@ -604,6 +604,7 @@ static SMMUDevice *smmu_get_sdev(SMMUState *s, SMMUPciBus *sbus,
         memory_region_init_iommu(&sdev->iommu, sizeof(sdev->iommu),
                                  s->mrtypename,
                                  OBJECT(s), name, UINT64_MAX);
+        address_space_init(&sdev->as_sysmem, &s->root, name);
         address_space_init(&sdev->as,
                            MEMORY_REGION(&sdev->iommu), name);
         trace_smmu_add_mr(name);
@@ -619,7 +620,11 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
     SMMUPciBus *sbus = smmu_get_sbus(s, bus);
     SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
 
-    return &sdev->as;
+    if (s->nested && !s->s2_hwpt) {
+        return &sdev->as_sysmem;
+    } else {
+        return &sdev->as;
+    }
 }
 
 static int smmu_dev_set_iommu_device(PCIBus *bus, void *opaque, int devfn,
@@ -775,6 +780,13 @@ static void smmu_base_realize(DeviceState *dev, Error **errp)
                 /* revert nested setup */
                 s->nested = false;
             }
+        }
+        if (s->nested) {
+            memory_region_init(&s->root, OBJECT(s), "root", UINT64_MAX);
+            memory_region_init_alias(&s->sysmem, OBJECT(s),
+                                     "smmu-sysmem", get_system_memory(), 0,
+                                     memory_region_size(get_system_memory()));
+            memory_region_add_subregion(&s->root, 0, &s->sysmem);
         }
     }
 
