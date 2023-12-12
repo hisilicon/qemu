@@ -2701,7 +2701,7 @@ static int vtd_init_fl_hwpt(IOMMUFDDevice *idev,
 
     ret = iommufd_backend_alloc_hwpt(idev->iommufd, idev->dev_id,
                                      s2_hwptid, 0, IOMMU_HWPT_DATA_VTD_S1,
-                                     sizeof(vtd), &vtd, &hwpt_id);
+                                     sizeof(vtd), &vtd, &hwpt_id, NULL);
     if (ret) {
         error_setg(errp, "Failed to allocate stage-1 page table, dev_id %d",
                    idev->dev_id);
@@ -2862,7 +2862,7 @@ static int vtd_device_attach_container(VTDIOMMUFDDevice *vtd_idev,
                                      container->ioas_id,
                                      IOMMU_HWPT_ALLOC_NEST_PARENT,
                                      IOMMU_HWPT_DATA_NONE,
-                                     0, NULL, &hwpt_id);
+                                     0, NULL, &hwpt_id, NULL);
     if (ret) {
         error_setg_errno(errp, errno, "error alloc parent hwpt");
         return ret;

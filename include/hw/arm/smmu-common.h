@@ -111,6 +111,7 @@ typedef struct SMMUHwpt {
     void *smmu;
     uint32_t ioas_id;
     uint32_t hwpt_id;
+    uint32_t out_fault_fd;
     int iommufd;
 } SMMUHwpt;
 
