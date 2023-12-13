@@ -35,6 +35,9 @@ int iommufd_device_detach_hwpt(IOMMUFDDevice *idev);
 int iommufd_device_get_info(IOMMUFDDevice *idev,
                             enum iommu_hw_info_type *type,
                             uint32_t len, void *data);
+int iommufd_device_invalidate_cache(IOMMUFDDevice *ideve,
+                                    uint32_t req_type, uint32_t req_len,
+                                    uint32_t *req_num, void *reqs_ptr);
 void iommufd_device_init(void *_idev, size_t instance_size,
                          IOMMUFDBackend *iommufd, uint32_t dev_id,
                          uint32_t ioas_id, IOMMUFDDeviceOps *ops);
