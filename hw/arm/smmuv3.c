@@ -1304,23 +1304,50 @@ static int smmuv3_invalidate_cache(SMMUState *s, Cmd *cmds, uint32_t *ncmds, uin
     return ret;
 }
 
+static int smmuv3_invalidate_dev_cache(SMMUState *s, Cmd *cmds, uint32_t *ncmds, uint32_t *cmd_error)
+{
+    SMMUDevice *sdev;
+    uint32_t ndevi;
+    int ret = 0;
+
+    if (!s->nested) {
+        return 0;
+    }
+
+    QLIST_FOREACH(sdev, &s->devices_with_nesting, next) {
+        if (!sdev->hwpt || !sdev->idev)
+            continue;
+        ndevi = *ncmds;
+        ret = smmu_iommu_dev_invalidate_cache(sdev,
+                                              IOMMU_DEV_INVALIDATE_DATA_ARM_SMMUV3,
+                                              sizeof(*cmds), ncmds, cmds);
+        if (ret || ndevi != *ncmds || *cmd_error) {
+            error_report("%s failed: ret=%d, ndevi=%d, done=%d, error=0x%x",
+                         __func__, ret, ndevi, *ncmds, *cmd_error);
+        }
+    }
+    return ret;
+}
+
 static int smmuv3_cmdq_consume(SMMUv3State *s)
 {
     SMMUState *bs = ARM_SMMU(s);
     SMMUCmdError cmd_error = SMMU_CERROR_NONE;
     SMMUQueue *q = &s->cmdq;
     SMMUCommandType type = 0;
-    uint32_t ncmds, ntlbi = 0;
-    uint32_t *cons_list;
-    Cmd *cmds;
+    Cmd *cmds_hwpt, *cmds_dev;
+    uint32_t ncmds, ntlbi = 0, ndevi = 0;
+    uint32_t *cons_hwpt, *cons_dev;
 
     if (!smmuv3_cmdq_enabled(s)) {
         return 0;
     }
 
     ncmds = smmuv3_q_ncmds(q);
-    cmds = g_malloc0(sizeof(*cmds) * ncmds);
-    cons_list = g_malloc0(sizeof(*cons_list) * ncmds);
+    cmds_dev = g_malloc0(sizeof(*cmds_dev) * ncmds);
+    cons_dev = g_malloc0(sizeof(*cons_dev) * ncmds);
+    cmds_hwpt = g_malloc0(sizeof(*cmds_hwpt) * ncmds);
+    cons_hwpt = g_malloc0(sizeof(*cons_hwpt) * ncmds);
 
     /*
      * some commands depend on register values, typically CR0. In case those
@@ -1418,8 +1445,8 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_cfgi_cd(sid);
             smmuv3_flush_config(sdev);
             if (sdev->hwpt) {
-                cons_list[ntlbi] = q->cons;
-                cmds[ntlbi++] = cmd;
+                cons_dev[ndevi] = q->cons;
+                cmds_dev[ndevi++] = cmd;
             }
             break;
         }
@@ -1435,8 +1462,8 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nh_asid(asid);
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_asid(bs, asid);
-            cons_list[ntlbi] = q->cons;
-            cmds[ntlbi++] = cmd;
+            cons_hwpt[ntlbi] = q->cons;
+            cmds_hwpt[ntlbi++] = cmd;
             break;
         }
         case SMMU_CMD_TLBI_NH_ALL:
@@ -1449,8 +1476,8 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nh();
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_all(bs);
-            cons_list[ntlbi] = q->cons;
-            cmds[ntlbi++] = cmd;
+            cons_hwpt[ntlbi] = q->cons;
+            cmds_hwpt[ntlbi++] = cmd;
             break;
         case SMMU_CMD_TLBI_NH_VAA:
         case SMMU_CMD_TLBI_NH_VA:
@@ -1459,16 +1486,16 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
                 break;
             }
             smmuv3_range_inval(bs, &cmd);
-            cons_list[ntlbi] = q->cons;
-            cmds[ntlbi++] = cmd;
+            cons_hwpt[ntlbi] = q->cons;
+            cmds_hwpt[ntlbi++] = cmd;
             break;
         case SMMU_CMD_ATC_INV:
         {
             uint32_t sid = CMD_SID(&cmd);
             SMMUDevice *sdev = smmu_find_sdev(bs, sid);
             if (sdev->hwpt) {
-                cons_list[ntlbi] = q->cons;
-                cmds[ntlbi++] = cmd;
+                cons_dev[ndevi] = q->cons;
+                cmds_dev[ndevi++] = cmd;
 	    }
             break;
 	}
@@ -1528,8 +1555,12 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         queue_cons_incr(q);
     }
     if (!cmd_error && ntlbi &&
-        smmuv3_invalidate_cache(bs, cmds, &ntlbi, &cmd_error)) {
-        q->cons = cons_list[ntlbi];
+        smmuv3_invalidate_cache(bs, cmds_hwpt, &ntlbi, &cmd_error)) {
+        q->cons = cons_hwpt[ntlbi];
+    }
+    if (!cmd_error && ndevi &&
+        smmuv3_invalidate_dev_cache(bs, cmds_dev, &ndevi, &cmd_error)) {
+        q->cons = cons_dev[ndevi];
     }
 
     if (cmd_error) {
@@ -1537,8 +1568,10 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         smmu_write_cmdq_err(s, cmd_error);
         smmuv3_trigger_irq(s, SMMU_IRQ_GERROR, R_GERROR_CMDQ_ERR_MASK);
     }
-    g_free(cons_list);
-    g_free(cmds);
+    g_free(cons_hwpt);
+    g_free(cmds_hwpt);
+    g_free(cons_dev);
+    g_free(cmds_dev);
 
     trace_smmuv3_cmdq_consume_out(Q_PROD(q), Q_CONS(q),
                                   Q_PROD_WRAP(q), Q_CONS_WRAP(q));
