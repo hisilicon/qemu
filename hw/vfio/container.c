@@ -429,10 +429,30 @@ static int vfio_get_iommu_type(VFIOContainer *container,
     return -EINVAL;
 }
 
+/*
+ * vfio_get_iommu_ops - get a VFIOIOMMUClass associated with a type
+ */
+static const VFIOIOMMUClass *vfio_get_iommu_class(int iommu_type, Error **errp)
+{
+    ObjectClass *klass = NULL;
+
+    switch (iommu_type) {
+    case VFIO_TYPE1v2_IOMMU:
+    case VFIO_TYPE1_IOMMU:
+        klass = object_class_by_name(TYPE_VFIO_IOMMU_LEGACY);
+        break;
+    default:
+        g_assert_not_reached();
+    };
+
+    return VFIO_IOMMU_CLASS(klass);
+}
+
 static int vfio_init_container(VFIOContainer *container, int group_fd,
                                VFIOAddressSpace *space, Error **errp)
 {
     int iommu_type, dirty_log_manual_clear, ret;
+    const VFIOIOMMUClass *vioc;
 
     iommu_type = vfio_get_iommu_type(container, errp);
     if (iommu_type < 0) {
@@ -467,7 +487,14 @@ static int vfio_init_container(VFIOContainer *container, int group_fd,
     if (dirty_log_manual_clear) {
         container->dirty_log_manual_clear = dirty_log_manual_clear;
     }
-    vfio_container_init(&container->bcontainer, space, &vfio_legacy_ops);
+ 
+    vioc = vfio_get_iommu_class(iommu_type, errp);
+    if (!vioc) {
+        error_setg(errp, "No available IOMMU models");
+        return -EINVAL;
+    }
+
+    vfio_container_init(&container->bcontainer, space, vioc);
     return 0;
 }
 
@@ -677,7 +704,6 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     container->fd = fd;
     QLIST_INIT(&container->dma_list);
     bcontainer = &container->bcontainer;
-    vfio_container_init(bcontainer, space, &vfio_legacy_ops);
 
     ret = vfio_init_container(container, group->fd, space, errp);
     if (ret) {
@@ -1218,12 +1244,25 @@ out_single:
     return ret;
 }
 
-const VFIOIOMMUOps vfio_legacy_ops = {
-    .dma_map = vfio_legacy_dma_map,
-    .dma_unmap = vfio_legacy_dma_unmap,
-    .attach_device = vfio_legacy_attach_device,
-    .detach_device = vfio_legacy_detach_device,
-    .set_dirty_page_tracking = vfio_legacy_set_dirty_page_tracking,
-    .query_dirty_bitmap = vfio_legacy_query_dirty_bitmap,
-    .pci_hot_reset = vfio_legacy_pci_hot_reset,
+static void vfio_iommu_legacy_class_init(ObjectClass *klass, void *data)
+{
+    VFIOIOMMUClass *vioc = VFIO_IOMMU_CLASS(klass);
+
+    vioc->dma_map = vfio_legacy_dma_map;
+    vioc->dma_unmap = vfio_legacy_dma_unmap;
+    vioc->attach_device = vfio_legacy_attach_device;
+    vioc->detach_device = vfio_legacy_detach_device;
+    vioc->set_dirty_page_tracking = vfio_legacy_set_dirty_page_tracking;
+    vioc->query_dirty_bitmap = vfio_legacy_query_dirty_bitmap;
+    vioc->pci_hot_reset = vfio_legacy_pci_hot_reset;
 };
+
+static const TypeInfo types[] = {
+    {
+        .name = TYPE_VFIO_IOMMU_LEGACY,
+        .parent = TYPE_VFIO_IOMMU,
+        .class_init = vfio_iommu_legacy_class_init,
+    },
+};
+
+DEFINE_TYPES(types)
