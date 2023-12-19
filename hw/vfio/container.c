@@ -441,6 +441,10 @@ static const VFIOIOMMUClass *vfio_get_iommu_class(int iommu_type, Error **errp)
     case VFIO_TYPE1_IOMMU:
         klass = object_class_by_name(TYPE_VFIO_IOMMU_LEGACY);
         break;
+    case VFIO_SPAPR_TCE_v2_IOMMU:
+    case VFIO_SPAPR_TCE_IOMMU:
+        klass = object_class_by_name(TYPE_VFIO_IOMMU_SPAPR);
+        break;
     default:
         g_assert_not_reached();
     };
@@ -716,25 +720,9 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
         goto free_container_exit;
     }
 
-    switch (container->iommu_type) {
-    case VFIO_TYPE1v2_IOMMU:
-    case VFIO_TYPE1_IOMMU:
-    case VFIO_TYPE1v2_S_IOMMU:
-        ret = vfio_legacy_setup(bcontainer, errp);
-        break;
-    case VFIO_SPAPR_TCE_v2_IOMMU:
-    case VFIO_SPAPR_TCE_IOMMU:
-    {
-        ret = vfio_spapr_container_init(container, errp);
-        if (ret) {
-            goto enable_discards_exit;
-        }
-        break;
-    }
-    default:
-        g_assert_not_reached();
-    }
+    assert(bcontainer->ops->setup);
 
+    ret = bcontainer->ops->setup(bcontainer, errp);
     if (ret) {
         goto enable_discards_exit;
     }

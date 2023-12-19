@@ -543,3 +543,23 @@ void vfio_spapr_container_deinit(VFIOContainer *container)
         g_free(hostwin);
     }
 }
+
+static void vfio_iommu_spapr_class_init(ObjectClass *klass, void *data)
+{
+    VFIOIOMMUClass *vioc = VFIO_IOMMU_CLASS(klass);
+
+    vioc->add_window = vfio_spapr_container_add_section_window;
+    vioc->del_window = vfio_spapr_container_del_section_window;
+    //vioc->release = vfio_spapr_container_release;
+    //vioc->setup = vfio_spapr_container_setup;
+};
+
+static const TypeInfo types[] = {
+    {
+        .name = TYPE_VFIO_IOMMU_SPAPR,
+        .parent = TYPE_VFIO_IOMMU_LEGACY,
+        .class_init = vfio_iommu_spapr_class_init,
+    },
+};
+
+DEFINE_TYPES(types)
