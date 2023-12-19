@@ -764,7 +764,9 @@ listener_release_exit:
     }
     if (container->iommu_type == VFIO_SPAPR_TCE_v2_IOMMU ||
         container->iommu_type == VFIO_SPAPR_TCE_IOMMU) {
-        vfio_spapr_container_deinit(container);
+        if (bcontainer->ops->release) {
+            bcontainer->ops->release(bcontainer);
+    }
     }
 
 enable_discards_exit:
@@ -803,7 +805,9 @@ static void vfio_disconnect_container(VFIOGroup *group)
         }
         if (container->iommu_type == VFIO_SPAPR_TCE_v2_IOMMU ||
             container->iommu_type == VFIO_SPAPR_TCE_IOMMU) {
-            vfio_spapr_container_deinit(container);
+            if (bcontainer->ops->release) {
+                bcontainer->ops->release(bcontainer);
+            }
         }
     }
 
