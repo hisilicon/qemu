@@ -430,7 +430,7 @@ static int vfio_get_iommu_type(VFIOContainer *container,
 }
 
 static int vfio_init_container(VFIOContainer *container, int group_fd,
-                               Error **errp)
+                               VFIOAddressSpace *space, Error **errp)
 {
     int iommu_type, dirty_log_manual_clear, ret;
 
@@ -467,7 +467,7 @@ static int vfio_init_container(VFIOContainer *container, int group_fd,
     if (dirty_log_manual_clear) {
         container->dirty_log_manual_clear = dirty_log_manual_clear;
     }
-
+    vfio_container_init(&container->bcontainer, space, &vfio_legacy_ops);
     return 0;
 }
 
@@ -679,7 +679,7 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     bcontainer = &container->bcontainer;
     vfio_container_init(bcontainer, space, &vfio_legacy_ops);
 
-    ret = vfio_init_container(container, group->fd, errp);
+    ret = vfio_init_container(container, group->fd, space, errp);
     if (ret) {
         goto free_container_exit;
     }
