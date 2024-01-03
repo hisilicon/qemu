@@ -60,6 +60,12 @@
 #define DEFAULT_MIGRATE_X_CHECKPOINT_DELAY (200 * 100)
 #define DEFAULT_MIGRATE_MULTIFD_CHANNELS 2
 #define DEFAULT_MIGRATE_MULTIFD_COMPRESSION MULTIFD_COMPRESSION_NONE
+
+/*
+ * When the compression method is available and supported by the
+ * accelerator, data compression is performed using the accelerator.
+ */
+#define DEFAULT_MIGRATE_MULTIFD_COMPRESSION_ACCEL MULTIFD_COMPRESSION_ACCEL_AUTO
 /* 0: means nocompress, 1: best speed, ... 9: best compress ratio */
 #define DEFAULT_MIGRATE_MULTIFD_ZLIB_LEVEL 1
 /* 0: means nocompress, 1: best speed, ... 20: best compress ratio */
@@ -140,6 +146,9 @@ Property migration_properties[] = {
     DEFINE_PROP_MULTIFD_COMPRESSION("multifd-compression", MigrationState,
                       parameters.multifd_compression,
                       DEFAULT_MIGRATE_MULTIFD_COMPRESSION),
+    DEFINE_PROP_MULTIFD_COMP_ACCEL("multifd-compression-accel", MigrationState,
+                      parameters.multifd_compression_accel,
+                      DEFAULT_MIGRATE_MULTIFD_COMPRESSION_ACCEL),
     DEFINE_PROP_UINT8("multifd-zlib-level", MigrationState,
                       parameters.multifd_zlib_level,
                       DEFAULT_MIGRATE_MULTIFD_ZLIB_LEVEL),
@@ -854,6 +863,15 @@ MultiFDCompression migrate_multifd_compression(void)
     return s->parameters.multifd_compression;
 }
 
+MultiFDCompressionAccel migrate_multifd_compression_accel(void)
+{
+    MigrationState *s = migrate_get_current();
+
+    assert(s->parameters.multifd_compression_accel <
+           MULTIFD_COMPRESSION_ACCEL__MAX);
+    return s->parameters.multifd_compression_accel;
+}
+
 int migrate_multifd_zlib_level(void)
 {
     MigrationState *s = migrate_get_current();
@@ -981,6 +999,8 @@ MigrationParameters *qmp_query_migrate_parameters(Error **errp)
     params->multifd_channels = s->parameters.multifd_channels;
     params->has_multifd_compression = true;
     params->multifd_compression = s->parameters.multifd_compression;
+    params->has_multifd_compression_accel = true;
+    params->multifd_compression_accel = s->parameters.multifd_compression_accel;
     params->has_multifd_zlib_level = true;
     params->multifd_zlib_level = s->parameters.multifd_zlib_level;
     params->has_multifd_zstd_level = true;
@@ -1037,6 +1057,7 @@ void migrate_params_init(MigrationParameters *params)
     params->has_block_incremental = true;
     params->has_multifd_channels = true;
     params->has_multifd_compression = true;
+    params->has_multifd_compression_accel = true;
     params->has_multifd_zlib_level = true;
     params->has_multifd_zstd_level = true;
     params->has_xbzrle_cache_size = true;
@@ -1312,6 +1333,9 @@ static void migrate_params_test_apply(MigrateSetParameters *params,
     if (params->has_multifd_compression) {
         dest->multifd_compression = params->multifd_compression;
     }
+    if (params->has_multifd_compression_accel) {
+        dest->multifd_compression_accel = params->multifd_compression_accel;
+    }
     if (params->has_xbzrle_cache_size) {
         dest->xbzrle_cache_size = params->xbzrle_cache_size;
     }
@@ -1446,6 +1470,10 @@ static void migrate_params_apply(MigrateSetParameters *params, Error **errp)
     }
     if (params->has_multifd_compression) {
         s->parameters.multifd_compression = params->multifd_compression;
+    }
+    if (params->has_multifd_compression_accel) {
+        s->parameters.multifd_compression_accel =
+            params->multifd_compression_accel;
     }
     if (params->has_xbzrle_cache_size) {
         s->parameters.xbzrle_cache_size = params->xbzrle_cache_size;

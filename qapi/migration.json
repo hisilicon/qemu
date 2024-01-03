@@ -665,6 +665,23 @@
   'data': [ 'normal', 'cpr-reboot' ] }
 
 ##
+# @MultiFDCompressionAccel:
+#
+# An enumeration of multifd compression accelerator.
+#
+# @auto: if accelerators are available, enable one of them.
+#
+# @none: disable compression accelerator.
+#
+# @qpl: enable qpl compression accelerator.
+#
+# Since: 8.2
+##
+{ 'enum': 'MultiFDCompressionAccel',
+  'data': [ 'auto', 'none',
+            { 'name': 'qpl', 'if': 'CONFIG_QPL' } ] }
+
+##
 # @BitmapMigrationBitmapAliasTransform:
 #
 # @persistent: If present, the bitmap will be made persistent or
@@ -847,6 +864,9 @@
 # @multifd-compression: Which compression method to use.  Defaults to
 #     none.  (Since 5.0)
 #
+# @multifd-compression-accel: Which compression accelerator to use.
+#     Defaults to auto.  (Since 8.2)
+#
 # @multifd-zlib-level: Set the compression level to be used in live
 #     migration, the compression level is an integer between 0 and 9,
 #     where 0 means no compression, 1 means the best compression
@@ -913,7 +933,9 @@
            { 'name': 'block-incremental', 'features': [ 'deprecated' ] },
            'multifd-channels',
            'xbzrle-cache-size', 'max-postcopy-bandwidth',
-           'max-cpu-throttle', 'multifd-compression',
+           'max-cpu-throttle',
+           'multifd-compression',
+           'multifd-compression-accel',
            'multifd-zlib-level', 'multifd-zstd-level',
            'block-bitmap-mapping',
            { 'name': 'x-vcpu-dirty-limit-period', 'features': ['unstable'] },
@@ -1039,6 +1061,9 @@
 # @multifd-compression: Which compression method to use.  Defaults to
 #     none.  (Since 5.0)
 #
+# @multifd-compression-accel: Which compression accelerator to use.
+#     Defaults to auto. (Since 8.2)
+#
 # @multifd-zlib-level: Set the compression level to be used in live
 #     migration, the compression level is an integer between 0 and 9,
 #     where 0 means no compression, 1 means the best compression
@@ -1124,6 +1149,7 @@
             '*max-postcopy-bandwidth': 'size',
             '*max-cpu-throttle': 'uint8',
             '*multifd-compression': 'MultiFDCompression',
+	    '*multifd-compression-accel': 'MultiFDCompressionAccel',
             '*multifd-zlib-level': 'uint8',
             '*multifd-zstd-level': 'uint8',
             '*block-bitmap-mapping': [ 'BitmapMigrationNodeAlias' ],
@@ -1267,6 +1293,9 @@
 # @multifd-compression: Which compression method to use.  Defaults to
 #     none.  (Since 5.0)
 #
+# @multifd-compression-accel: Which compression accelerator to use.
+#     Defaults to auto. (Since 8.2)
+#
 # @multifd-zlib-level: Set the compression level to be used in live
 #     migration, the compression level is an integer between 0 and 9,
 #     where 0 means no compression, 1 means the best compression
@@ -1349,6 +1378,7 @@
             '*max-postcopy-bandwidth': 'size',
             '*max-cpu-throttle': 'uint8',
             '*multifd-compression': 'MultiFDCompression',
+            '*multifd-compression-accel': 'MultiFDCompressionAccel',
             '*multifd-zlib-level': 'uint8',
             '*multifd-zstd-level': 'uint8',
             '*block-bitmap-mapping': [ 'BitmapMigrationNodeAlias' ],

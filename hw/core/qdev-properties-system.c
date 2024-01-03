@@ -679,6 +679,18 @@ const PropertyInfo qdev_prop_mig_mode = {
     .set_default_value = qdev_propinfo_set_default_value_enum,
 };
 
+/* --- MultiFD Compression Accelerator --- */
+
+const PropertyInfo qdev_prop_multifd_compression_accel = {
+    .name = "MultiFDCompressionAccel",
+    .description = "MultiFD Compression Accelerator, "
+                   "auto/none/qpl",
+    .enum_table = &MultiFDCompressionAccel_lookup,
+    .get = qdev_propinfo_get_enum,
+    .set = qdev_propinfo_set_enum,
+    .set_default_value = qdev_propinfo_set_default_value_enum,
+};
+
 /* --- Reserved Region --- */
 
 /*

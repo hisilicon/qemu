@@ -344,6 +344,11 @@ void hmp_info_migrate_parameters(Monitor *mon, const QDict *qdict)
         monitor_printf(mon, "%s: %s\n",
             MigrationParameter_str(MIGRATION_PARAMETER_MULTIFD_COMPRESSION),
             MultiFDCompression_str(params->multifd_compression));
+        assert(params->has_multifd_compression_accel);
+        monitor_printf(mon, "%s: %s\n",
+            MigrationParameter_str(
+                MIGRATION_PARAMETER_MULTIFD_COMPRESSION_ACCEL),
+            MultiFDCompressionAccel_str(params->multifd_compression_accel));
         monitor_printf(mon, "%s: %" PRIu64 " bytes\n",
             MigrationParameter_str(MIGRATION_PARAMETER_XBZRLE_CACHE_SIZE),
             params->xbzrle_cache_size);
@@ -625,6 +630,11 @@ void hmp_migrate_set_parameter(Monitor *mon, const QDict *qdict)
         p->has_multifd_compression = true;
         visit_type_MultiFDCompression(v, param, &p->multifd_compression,
                                       &err);
+        break;
+    case MIGRATION_PARAMETER_MULTIFD_COMPRESSION_ACCEL:
+        p->has_multifd_compression_accel = true;
+        visit_type_MultiFDCompressionAccel(v, param,
+                                           &p->multifd_compression_accel, &err);
         break;
     case MIGRATION_PARAMETER_MULTIFD_ZLIB_LEVEL:
         p->has_multifd_zlib_level = true;
