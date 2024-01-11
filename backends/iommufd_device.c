@@ -14,6 +14,18 @@
 #include "qemu/error-report.h"
 #include "sysemu/iommufd_device.h"
 
+int iommufd_device_attach_hwpt(IOMMUFDDevice *idev, uint32_t hwpt_id)
+{
+    g_assert(idev->ops->attach_hwpt);
+    return idev->ops->attach_hwpt(idev, hwpt_id);
+}
+
+int iommufd_device_detach_hwpt(IOMMUFDDevice *idev)
+{
+    g_assert(idev->ops->detach_hwpt);
+    return idev->ops->detach_hwpt(idev);
+}
+
 int iommufd_device_get_info(IOMMUFDDevice *idev,
                             enum iommu_hw_info_type *type,
                             uint32_t len, void *data)
@@ -39,7 +51,8 @@ int iommufd_device_get_info(IOMMUFDDevice *idev,
 }
 
 void iommufd_device_init(void *_idev, size_t instance_size,
-                         IOMMUFDBackend *iommufd, uint32_t dev_id)
+                         IOMMUFDBackend *iommufd, uint32_t dev_id,
+                         IOMMUFDDeviceOps *ops)
 {
     IOMMUFDDevice *idev = (IOMMUFDDevice *)_idev;
 
@@ -47,4 +60,5 @@ void iommufd_device_init(void *_idev, size_t instance_size,
 
     idev->iommufd = iommufd;
     idev->dev_id = dev_id;
+    idev->ops = ops;
 }

@@ -429,7 +429,8 @@ found_container:
     QLIST_INSERT_HEAD(&bcontainer->device_list, vbasedev, container_next);
     QLIST_INSERT_HEAD(&vfio_device_list, vbasedev, global_next);
 
-    iommufd_device_init(idev, sizeof(*idev), container->be, vbasedev->devid);
+    iommufd_device_init(idev, sizeof(*idev), container->be, vbasedev->devid,
+                        NULL);
     trace_iommufd_cdev_device_info(vbasedev->name, devfd, vbasedev->num_irqs,
                                    vbasedev->num_regions, vbasedev->flags);
     return 0;
