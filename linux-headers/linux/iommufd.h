@@ -795,6 +795,12 @@ struct iommu_hwpt_pgfault {
 	__u64 private_data[2];
 };
 
+enum iommu_page_response_code {
+        IOMMU_PAGE_RESP_SUCCESS = 0,
+        IOMMU_PAGE_RESP_INVALID,
+        IOMMU_PAGE_RESP_FAILURE,
+};
+
 /**
  * struct iommu_hwpt_response - IOMMU page fault response
  * @size: sizeof(struct iommu_hwpt_response)

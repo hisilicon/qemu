@@ -107,12 +107,22 @@ typedef struct SMMUTransCfg {
     struct SMMUS2Cfg s2cfg;
 } SMMUTransCfg;
 
+typedef struct PageRespEntry {
+    QTAILQ_ENTRY(PageRespEntry) entry;
+    struct iommu_hwpt_page_response resp;
+} PageRespEntry;
+
 typedef struct SMMUHwpt {
+    void  *sdev;
     void *smmu;
     uint32_t ioas_id;
     uint32_t hwpt_id;
     uint32_t out_fault_fd;
     int iommufd;
+    QemuThread thread;
+    QemuMutex fault_mutex;
+    QTAILQ_HEAD(, PageRespEntry) pageresp;
+    bool exiting;
 } SMMUHwpt;
 
 typedef struct SMMUDevice {
@@ -227,7 +237,7 @@ int smmu_iommu_get_info(SMMUDevice *sdev, uint32_t *data_type,
                         uint32_t data_len, void *data);
 int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
                                   uint32_t data_type, uint32_t data_len,
-                                  void *data);
+                                  void *data, void *(*handler)(void *));
 void smmu_iommu_uninstall_nested_ste(SMMUState *s, SMMUDevice *sdev);
 int smmu_iommu_invalidate_cache(SMMUDevice *sdev, uint32_t type, uint32_t len,
                                 uint32_t *num, void *reqs);
