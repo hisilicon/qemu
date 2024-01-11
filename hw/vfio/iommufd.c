@@ -26,6 +26,8 @@
 #include "qemu/chardev_open.h"
 #include "pci.h"
 
+static IOMMUFDDeviceOps vfio_iommufd_device_ops;
+
 static int iommufd_cdev_map(const VFIOContainerBase *bcontainer, hwaddr iova,
                             ram_addr_t size, void *vaddr, bool readonly)
 {
@@ -430,7 +432,7 @@ found_container:
     QLIST_INSERT_HEAD(&vfio_device_list, vbasedev, global_next);
 
     iommufd_device_init(idev, sizeof(*idev), container->be, vbasedev->devid,
-                        NULL);
+                        &vfio_iommufd_device_ops);
     trace_iommufd_cdev_device_info(vbasedev->name, devfd, vbasedev->num_irqs,
                                    vbasedev->num_regions, vbasedev->flags);
     return 0;
@@ -642,3 +644,35 @@ static const TypeInfo types[] = {
 };
 
 DEFINE_TYPES(types)
+
+static int vfio_iommufd_device_attach_hwpt(IOMMUFDDevice *idev,
+                                           uint32_t hwpt_id)
+{
+    VFIODevice *vbasedev = container_of(idev, VFIODevice, idev);
+    Error *err = NULL;
+    int ret;
+
+    ret = iommufd_cdev_attach_ioas_hwpt(vbasedev, hwpt_id, &err);
+    if (err) {
+        error_report_err(err);
+    }
+    return ret;
+}
+
+static int vfio_iommufd_device_detach_hwpt(IOMMUFDDevice *idev)
+{
+    VFIODevice *vbasedev = container_of(idev, VFIODevice, idev);
+    Error *err = NULL;
+    int ret;
+
+    ret = iommufd_cdev_detach_ioas_hwpt(vbasedev, &err);
+    if (err) {
+        error_report_err(err);
+    }
+    return ret;
+}
+
+static IOMMUFDDeviceOps vfio_iommufd_device_ops = {
+    .attach_hwpt = vfio_iommufd_device_attach_hwpt,
+    .detach_hwpt = vfio_iommufd_device_detach_hwpt,
+};
