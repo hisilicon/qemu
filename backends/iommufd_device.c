@@ -52,7 +52,7 @@ int iommufd_device_get_info(IOMMUFDDevice *idev,
 
 void iommufd_device_init(void *_idev, size_t instance_size,
                          IOMMUFDBackend *iommufd, uint32_t dev_id,
-                         IOMMUFDDeviceOps *ops)
+                         uint32_t ioas_id, IOMMUFDDeviceOps *ops)
 {
     IOMMUFDDevice *idev = (IOMMUFDDevice *)_idev;
 
@@ -60,5 +60,6 @@ void iommufd_device_init(void *_idev, size_t instance_size,
 
     idev->iommufd = iommufd;
     idev->dev_id = dev_id;
+    idev->ioas_id = ioas_id;
     idev->ops = ops;
 }
