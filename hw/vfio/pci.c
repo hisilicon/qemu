@@ -2990,6 +2990,17 @@ static void vfio_realize(PCIDevice *pdev, Error **errp)
         goto error;
     }
 
+    /*
+     * Inform IOMMU early on about the device, with idev as NULL.
+     * This helps to handle address_space differently for nested
+     * cases.
+     */
+    ret = pci_device_set_iommu_device(pdev, NULL, errp);
+    if (ret) {
+        error_prepend(errp, "Failed to set iommu_device: ");
+        goto out_teardown;
+    }
+
     if (!qemu_uuid_is_null(&vdev->vf_token)) {
         qemu_uuid_unparse(&vdev->vf_token, uuid);
         name = g_strdup_printf("%s vf_token=%s", vbasedev->name, uuid);
@@ -3107,14 +3118,13 @@ static void vfio_realize(PCIDevice *pdev, Error **errp)
 
     vfio_bars_register(vdev);
 
+    /* If iommufd is used, inform IOMMU about idev */
     if (vbasedev->iommufd) {
         ret = pci_device_set_iommu_device(pdev, &vbasedev->idev, errp);
-    } else {
-        ret = pci_device_set_iommu_device(pdev, 0, errp);
-    }
-    if (ret) {
-        error_prepend(errp, "Failed to set iommu_device: ");
-        goto out_teardown;
+        if (ret) {
+            error_prepend(errp, "Failed to set iommu_device: ");
+            goto out_teardown;
+        }
     }
 
     ret = vfio_add_capabilities(vdev, errp);
