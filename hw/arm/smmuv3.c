@@ -1376,7 +1376,30 @@ smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
     return true;
 }
 
-static int smmuv3_invalidate_cache(SMMUState *s, Cmd *cmds, uint32_t *ncmds, uint32_t *cmd_error)
+static void smmuv3_invalidate_cache_sdev(SMMUState *s, SMMUDevice *sdev,
+                                         Cmd *cmd, uint32_t *cmd_error)
+{
+    int ret = 0;
+    uint32_t ncmds = 1;
+
+    if (!s->nested) {
+        return;
+    }
+
+    if (sdev->hwpt && sdev->idev) {
+        ret = smmu_iommu_invalidate_cache(sdev, IOMMU_HWPT_DATA_ARM_SMMUV3,
+                                          sizeof(*cmd), &ncmds, cmd);
+        if (ret || *cmd_error) {
+            error_report("%s failed: ret=%d, done=%d, error=0x%x",
+                         __func__, ret,  ncmds, *cmd_error);
+        }
+    }
+
+    return;
+}
+
+static int smmuv3_invalidate_cache_all(SMMUState *s, Cmd *cmds,
+                                       uint32_t *ncmds, uint32_t *cmd_error)
 {
     SMMUDevice *sdev;
     uint32_t ntlbi;
@@ -1540,10 +1563,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
 
             trace_smmuv3_cmdq_cfgi_cd(sid);
             smmuv3_flush_config(sdev);
-            if (sdev->hwpt) {
-                cons_list[ntlbi] = q->cons;
-                cmds[ntlbi++] = cmd;
-            }
+            smmuv3_invalidate_cache_sdev(bs, sdev, &cmd, &cmd_error);
             break;
         }
         case SMMU_CMD_TLBI_NH_ASID:
@@ -1589,10 +1609,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         {
             uint32_t sid = CMD_SID(&cmd);
             SMMUDevice *sdev = smmu_find_sdev(bs, sid);
-            if (sdev->hwpt) {
-                cons_list[ntlbi] = q->cons;
-                cmds[ntlbi++] = cmd;
-	    }
+            smmuv3_invalidate_cache_sdev(bs, sdev, &cmd, &cmd_error);
             break;
 	}
         case SMMU_CMD_TLBI_S12_VMALL:
@@ -1663,7 +1680,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         queue_cons_incr(q);
     }
     if (!cmd_error && ntlbi &&
-        smmuv3_invalidate_cache(bs, cmds, &ntlbi, &cmd_error)) {
+        smmuv3_invalidate_cache_all(bs, cmds, &ntlbi, &cmd_error)) {
         q->cons = cons_list[ntlbi];
     }
 
