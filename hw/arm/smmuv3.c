@@ -1264,28 +1264,32 @@ static void *fault_handler(void *opaque)
     struct io_uring ring;
     struct io_uring_sqe *sqe;
     struct io_uring_cqe *cqe;
-    struct iommu_hwpt_pgfault *buf;
+    struct iommu_hwpt_pgfault *fault;
+    struct iommu_hwpt_page_response *resp;
+    void *data;
     int ret;
 
-    buf = g_new0(struct iommu_hwpt_pgfault, 1);
-    ret = io_uring_queue_init(1, &ring, 0);
+    fault = g_new0(struct iommu_hwpt_pgfault, 1);
+    resp = g_new0(struct iommu_hwpt_page_response, 1);
+    ret = io_uring_queue_init(1024, &ring, 0);
 
     while (!hwpt->exiting) {
         sqe = io_uring_get_sqe(&ring);
-        io_uring_prep_read(sqe, hwpt->out_fault_fd, buf,
-                           sizeof(struct iommu_hwpt_pgfault), 0);
-        io_uring_sqe_set_data(sqe, buf);
+        io_uring_prep_read(sqe, hwpt->out_fault_fd, fault,
+                           sizeof(*fault), 0);
+        io_uring_sqe_set_data(sqe, fault);
         io_uring_submit(&ring);
 
         /* read and process cqe event */
         ret = io_uring_wait_cqe(&ring, &cqe);
         if (ret == 0) {
-            signed int len = cqe->res;
-            void *data = io_uring_cqe_get_data(cqe);
-
-            if (len > 0) {
+            if (cqe->res == sizeof(*fault)) {
+                data = io_uring_cqe_get_data(cqe);
                 smmuv3_report_iommu_fault(hwpt, data);
             }
+        } else {
+            warn_report("%s: Read fault[hwpt_id 0x%x] failed %d",
+                         __func__, hwpt->hwpt_id, ret);
         }
 
         io_uring_cqe_seen(&ring, cqe);
@@ -1293,10 +1297,8 @@ static void *fault_handler(void *opaque)
         /* Check we have any pending responses */
         qemu_mutex_lock(&hwpt->fault_mutex);
         if (!QTAILQ_EMPTY(&hwpt->pageresp)) {
-            struct iommu_hwpt_page_response *resp;
             PageRespEntry *msg;
 
-            resp = g_new0(struct iommu_hwpt_page_response, 1);
             msg = QTAILQ_FIRST(&hwpt->pageresp);
             memcpy(resp, &msg->resp, sizeof(*resp));
             QTAILQ_REMOVE(&hwpt->pageresp, msg, entry);
@@ -1304,13 +1306,22 @@ static void *fault_handler(void *opaque)
 
             sqe = io_uring_get_sqe(&ring);
             io_uring_prep_write(sqe, hwpt->out_fault_fd, resp,
-                                sizeof(struct iommu_hwpt_page_response), 0);
+                                sizeof(*resp), 0);
             io_uring_sqe_set_data(sqe, resp);
             io_uring_submit(&ring);
+
+            ret = io_uring_wait_cqe(&ring, &cqe);
+            if (ret != 0 || cqe->res != sizeof(*resp)) {
+                warn_report("%s: Write resp[hwpt id 0x%x dev_id 0x%x pasid 0x%x] fail %d",
+                             __func__, resp->hwpt_id, resp->dev_id, resp->pasid, ret);
+            }
+            io_uring_cqe_seen(&ring, cqe);
         }
         qemu_mutex_unlock(&hwpt->fault_mutex);
     }
 
+    g_free(fault);
+    g_free(resp);
     io_uring_queue_exit(&ring);
     return NULL;
 }
