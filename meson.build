@@ -1214,6 +1214,24 @@ if not get_option('qpl').auto()
         cc.find_library('dl', required: get_option('qpl'))],
         link_args: ['-lstdc++'])
 endif
+uadk = not_found
+if not get_option('uadk').auto()
+  libwd_comp = cc.find_library('wd_comp', required: false)
+  if not libwd_comp.found()
+    error('libwd_comp not found, please install it from ' +
+    'https://github.com/Linaro/uadk')
+  endif
+  libwd = cc.find_library('wd', required: false)
+  if not libwd.found()
+    error('libwd not found, please install it from ' +
+    'https://github.com/Linaro/uadk')
+  endif
+  libwd_comp = dependency('libwd_comp',  required: get_option('uadk'),
+                          method: 'pkg-config')
+  libwd = dependency('libwd',  required: get_option('uadk'),
+                     method: 'pkg-config')
+  uadk = libwd_comp
+endif
 virgl = not_found
 
 have_vhost_user_gpu = have_tools and host_os == 'linux' and pixman.found()

@@ -675,10 +675,13 @@
 #
 # @qpl: enable qpl compression accelerator.
 #
+# @uadk: enable uadk compression accelerator.
+#
 # Since: 8.2
 ##
 { 'enum': 'MultiFDCompressionAccel',
   'data': [ 'auto', 'none',
+            { 'name': 'uadk', 'if': 'CONFIG_UADK' },
             { 'name': 'qpl', 'if': 'CONFIG_QPL' } ] }
 
 ##

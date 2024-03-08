@@ -684,7 +684,7 @@ const PropertyInfo qdev_prop_mig_mode = {
 const PropertyInfo qdev_prop_multifd_compression_accel = {
     .name = "MultiFDCompressionAccel",
     .description = "MultiFD Compression Accelerator, "
-                   "auto/none/qpl",
+                   "auto/none/qpl/uadk",
     .enum_table = &MultiFDCompressionAccel_lookup,
     .get = qdev_propinfo_get_enum,
     .set = qdev_propinfo_set_enum,
