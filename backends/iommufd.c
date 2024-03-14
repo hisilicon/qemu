@@ -234,7 +234,8 @@ int iommufd_backend_fault_alloc(IOMMUFDBackend *be, uint32_t *out_fault_id,
 int iommufd_backend_alloc_hwpt(IOMMUFDBackend *be, uint32_t dev_id,
                                uint32_t pt_id, uint32_t flags,
                                uint32_t data_type, uint32_t data_len,
-                               void *data_ptr, uint32_t *out_hwpt)
+                               uint32_t fault_id, void *data_ptr,
+                               uint32_t *out_hwpt)
 {
     int ret, fd = be->fd;
     struct iommu_hwpt_alloc alloc_hwpt = {
@@ -244,6 +245,7 @@ int iommufd_backend_alloc_hwpt(IOMMUFDBackend *be, uint32_t dev_id,
         .pt_id = pt_id,
         .data_type = data_type,
         .data_len = data_len,
+        .fault_id = fault_id,
         .data_uptr = (uintptr_t)data_ptr,
         .__reserved = 0,
     };
@@ -257,7 +259,7 @@ int iommufd_backend_alloc_hwpt(IOMMUFDBackend *be, uint32_t dev_id,
     }
 
     trace_iommufd_backend_alloc_hwpt(fd, dev_id, pt_id, flags, data_type,
-                                     data_len, (uint64_t)data_ptr,
+                                     data_len, fault_id, (uint64_t)data_ptr,
                                      alloc_hwpt.out_hwpt_id, ret);
     return ret;
 }
