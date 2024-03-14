@@ -657,7 +657,7 @@ static int smmu_dev_set_iommu_device(PCIBus *bus, void *opaque, int devfn,
     ret = iommufd_backend_alloc_hwpt(s->iommufd, idev->dev_id,
                                      idev->ioas_id,
                                      IOMMU_HWPT_ALLOC_NEST_PARENT,
-                                     IOMMU_HWPT_DATA_NONE, 0, NULL,
+                                     IOMMU_HWPT_DATA_NONE, 0, 0, NULL,
                                      &s2_hwpt_id);
     if (ret) {
         error_setg(errp, "failed to allocate an S2 hwpt");
@@ -795,7 +795,7 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
 
     ret = iommufd_backend_alloc_hwpt(idev->iommufd, idev->dev_id,
                                      sdev->s2_hwpt->hwpt_id, 0, data_type,
-                                     data_len, data, &hwpt->hwpt_id);
+                                     data_len, 0, data, &hwpt->hwpt_id);
     if (ret) {
         error_report("Unable to allocate stage-1 HW pagetable: %d", ret);
         goto free;
