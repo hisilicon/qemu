@@ -211,6 +211,26 @@ int iommufd_backend_unmap_dma(IOMMUFDBackend *be, uint32_t ioas_id,
     return ret;
 }
 
+int iommufd_backend_fault_alloc(IOMMUFDBackend *be, uint32_t *out_fault_id,
+                                uint32_t *out_fault_fd)
+{
+    int ret, fd = be->fd;
+    struct iommu_fault_alloc cmd = {
+        .size = sizeof(cmd),
+    };
+
+    ret = ioctl(fd, IOMMU_FAULT_ALLOC, &cmd);
+    if (ret) {
+        ret = -errno;
+        error_report("IOMMU_FAULT_ALLOC failed: %m");
+    } else {
+        *out_fault_id = cmd.out_fault_id;
+        *out_fault_fd = cmd.out_fault_fd;
+    }
+
+    return ret;
+}
+
 int iommufd_backend_alloc_hwpt(IOMMUFDBackend *be, uint32_t dev_id,
                                uint32_t pt_id, uint32_t flags,
                                uint32_t data_type, uint32_t data_len,

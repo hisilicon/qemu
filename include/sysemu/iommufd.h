@@ -40,4 +40,6 @@ int iommufd_backend_alloc_hwpt(IOMMUFDBackend *be, uint32_t dev_id,
 int iommufd_backend_invalidate_cache(IOMMUFDBackend *be, uint32_t hwpt_id,
                                      uint32_t data_type, uint32_t entry_len,
                                      uint32_t *entry_num, void *data_ptr);
+int iommufd_backend_fault_alloc(IOMMUFDBackend *be, uint32_t *out_fault_id,
+                                uint32_t *out_fault_fd);
 #endif
