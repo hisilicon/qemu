@@ -766,10 +766,12 @@ void smmu_iommu_uninstall_nested_ste(SMMUState *s, SMMUDevice *sdev)
 /* IOMMUFD helpers */
 int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
                                   uint32_t data_type, uint32_t data_len,
-                                  void *data)
+                                  void *data, bool alloc_fault)
 {
     SMMUHwpt *hwpt = sdev->hwpt;
     IOMMUFDDevice *idev;
+    uint32_t fault_id = 0, fault_fd = 0;
+    int flags = 0;
     int ret;
 
     if (!s || !sdev || !s->iommufd || !sdev->s2_hwpt) {
@@ -785,6 +787,15 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
         smmu_iommu_uninstall_nested_ste(s, sdev);
     }
 
+    if (alloc_fault) {
+        ret = iommufd_backend_fault_alloc(idev->iommufd, &fault_id, &fault_fd);
+        if (ret) {
+            error_report("Unable to allocate fault object: %d", ret);
+            return -EINVAL;
+        }
+        flags = IOMMU_HWPT_FAULT_ID_VALID;
+    }
+
     hwpt = g_new0(SMMUHwpt, 1);
     if (!hwpt) {
         return -ENOMEM;
@@ -794,8 +805,8 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
     hwpt->iommufd = idev->iommufd->fd;
 
     ret = iommufd_backend_alloc_hwpt(idev->iommufd, idev->dev_id,
-                                     sdev->s2_hwpt->hwpt_id, 0, data_type,
-                                     data_len, 0, data, &hwpt->hwpt_id);
+                                     sdev->s2_hwpt->hwpt_id, flags, data_type,
+                                     data_len, fault_id, data, &hwpt->hwpt_id);
     if (ret) {
         error_report("Unable to allocate stage-1 HW pagetable: %d", ret);
         goto free;
@@ -807,6 +818,9 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
         goto free_hwpt;
     }
 
+    if (alloc_fault) {
+        hwpt->fault_fd = fault_fd;
+    }
     sdev->hwpt = hwpt;
 
     return 0;

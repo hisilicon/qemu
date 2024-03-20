@@ -1255,7 +1255,8 @@ static void smmuv3_config_ste(SMMUDevice *sdev, int sid)
     trace_smmuv3_config_ste(sid, iommu_config.ste[0], iommu_config.ste[1]);
 
     ret = smmu_iommu_install_nested_ste(bs, sdev, IOMMU_HWPT_DATA_ARM_SMMUV3,
-                                        sizeof(iommu_config), &iommu_config);
+                                        sizeof(iommu_config), &iommu_config,
+                                        false);
     if (ret) {
         error_report("Unable to alloc Stage-1 HW Page Table: %d", ret);
     }

@@ -112,6 +112,8 @@ typedef struct SMMUHwpt {
     uint32_t ioas_id;
     uint32_t hwpt_id;
     int iommufd;
+    /* fault handling */
+    uint32_t fault_fd;
 } SMMUHwpt;
 
 typedef struct SMMUDevice {
@@ -226,7 +228,7 @@ int smmu_iommu_get_info(SMMUDevice *sdev, uint32_t *data_type,
                         uint32_t data_len, void *data);
 int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
                                   uint32_t data_type, uint32_t data_len,
-                                  void *data);
+                                  void *data, bool alloc_fault);
 void smmu_iommu_uninstall_nested_ste(SMMUState *s, SMMUDevice *sdev);
 int smmu_iommu_invalidate_cache(SMMUDevice *sdev, uint32_t type, uint32_t len,
                                 uint32_t *num, void *reqs);
