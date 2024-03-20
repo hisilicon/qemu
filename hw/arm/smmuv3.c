@@ -33,6 +33,9 @@
 #include "hw/arm/smmuv3.h"
 #include "smmuv3-internal.h"
 #include "smmu-internal.h"
+#ifdef CONFIG_LINUX_IO_URING
+#include <liburing.h>
+#endif
 
 #define PTW_RECORD_FAULT(cfg)   (((cfg)->stage == 1) ? (cfg)->record_faults : \
                                  (cfg)->s2cfg.record_faults)
@@ -1219,6 +1222,157 @@ static void smmuv3_range_inval(SMMUState *s, Cmd *cmd)
     }
 }
 
+static int smmuv3_report_iommu_fault(SMMUHwpt *hwpt, void *buf)
+{
+    struct iommu_hwpt_pgfault *fault = buf;
+    SMMUDevice *sdev = hwpt->sdev;
+    SMMUv3State *s3 = sdev->smmu;
+    uint32_t sid = smmu_get_sid(sdev);
+    SMMUEventInfo info = {0};
+
+    info.sid = sid;
+    info.type = SMMU_EVT_F_TRANSLATION;
+    info.u.f_translation.addr = fault->addr;
+    info.u.f_translation.stall = true;
+    info.u.f_translation.ssid = fault->pasid;
+    info.u.f_translation.stag = fault->grpid;
+
+    if (fault->flags | IOMMU_PGFAULT_FLAGS_PASID_VALID) {
+        info.u.f_translation.ssv = true;
+    }
+    if (fault->perm & IOMMU_PGFAULT_PERM_READ) {
+        info.u.f_translation.rnw = true;
+    }
+    if (fault->perm & IOMMU_PGFAULT_PERM_PRIV) {
+        info.u.f_translation.pnu = true;
+    }
+    if (fault->perm & IOMMU_PGFAULT_PERM_EXEC) {
+        info.u.f_translation.ind = true;
+    }
+
+    smmuv3_record_event(s3, &info);
+    return 0;
+}
+
+static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
+                                       uint32_t stag, uint32_t code,
+                                       uint64_t addr)
+{
+    SMMUDevice *sdev = smmu_find_sdev(bs, sid);
+    PageRespEntry *msg;
+    SMMUHwpt *hwpt;
+    IOMMUFDDevice *idev;
+
+    if (!sdev) {
+        return;
+    }
+
+    hwpt = sdev->hwpt;
+    idev = sdev->idev;
+
+    msg = g_malloc0(sizeof(*msg));
+    msg->resp.size = sizeof(struct iommu_hwpt_page_response);
+    msg->resp.addr = addr;
+    msg->resp.dev_id = idev->dev_id;
+    msg->resp.grpid = stag;
+    msg->resp.code = code;
+    qemu_mutex_lock(&hwpt->fault_mutex);
+    QTAILQ_INSERT_TAIL(&hwpt->pageresp, msg, entry);
+    qemu_cond_signal(&hwpt->fault_cond);
+    qemu_mutex_unlock(&hwpt->fault_mutex);
+}
+
+static void *write_fault_handler(void *opaque)
+{
+    SMMUHwpt *hwpt = opaque;
+    struct io_uring_sqe *sqe;
+    struct io_uring_cqe *cqe;
+    PageRespEntry *msg, *tmp;
+    struct iommu_hwpt_page_response *resp;
+    struct io_uring *ring = &hwpt->fault_ring;
+    int ret;
+
+    resp = g_new0(struct iommu_hwpt_page_response, 1);
+    while (!hwpt->exiting) {
+        /* Check we have any pending responses */
+        qemu_mutex_lock(&hwpt->fault_mutex);
+        qemu_cond_wait(&hwpt->fault_cond, &hwpt->fault_mutex);
+        QTAILQ_FOREACH_SAFE(msg, &hwpt->pageresp, entry, tmp) {
+            QTAILQ_REMOVE(&hwpt->pageresp, msg, entry);
+            memcpy(resp, &msg->resp, sizeof(*resp));
+            g_free(msg);
+
+            sqe = io_uring_get_sqe(ring);
+            io_uring_prep_write(sqe, hwpt->fault_fd, resp,
+                                sizeof(*resp), 0);
+            io_uring_sqe_set_data(sqe, resp);
+            io_uring_submit(ring);
+            ret = io_uring_wait_cqe(ring, &cqe);
+            if (ret != 0) {
+                warn_report("%s: Write resp[ dev_id 0x%x pasid 0x%x] fail %d",
+                             __func__, resp->dev_id, resp->pasid, ret);
+            }
+            io_uring_cqe_seen(ring, cqe);
+        }
+        qemu_mutex_unlock(&hwpt->fault_mutex);
+    }
+    g_free(resp);
+    return NULL;
+}
+
+static void *read_fault_handler(void *opaque)
+{
+    SMMUHwpt *hwpt = opaque;
+    struct io_uring_sqe *sqe;
+    struct io_uring_cqe *cqe;
+    struct iommu_hwpt_pgfault *fault;
+    struct io_uring *ring = &hwpt->fault_ring;
+    void *data;
+    int ret;
+
+    fault = g_new0(struct iommu_hwpt_pgfault, 1);
+    while (!hwpt->exiting) {
+        sqe = io_uring_get_sqe(ring);
+        io_uring_prep_read(sqe, hwpt->fault_fd, fault,
+                           sizeof(*fault), 0);
+        io_uring_sqe_set_data(sqe, fault);
+        io_uring_submit(ring);
+
+        ret = io_uring_wait_cqe(ring, &cqe);
+        if (ret == 0) {
+            if (cqe->res == sizeof(*fault)) {
+                data = io_uring_cqe_get_data(cqe);
+                smmuv3_report_iommu_fault(hwpt, data);
+            }
+        } else {
+            warn_report("%s: Read fault[hwpt_id 0x%x] failed %d",
+                         __func__, hwpt->hwpt_id, ret);
+        }
+        io_uring_cqe_seen(ring, cqe);
+    }
+    g_free(fault);
+    return NULL;
+}
+
+static void create_fault_handlers(SMMUHwpt *hwpt)
+{
+    if (!hwpt->fault_fd) {
+        warn_report("No fault fd for hwpt id: %d", hwpt->hwpt_id);
+        return;
+    }
+
+    io_uring_queue_init(1024, &hwpt->fault_ring, 0);
+    qemu_mutex_init(&hwpt->fault_mutex);
+    qemu_cond_init(&hwpt->fault_cond);
+    QTAILQ_INIT(&hwpt->pageresp);
+    qemu_thread_create(&hwpt->read_fault_thread, "io fault read",
+                       read_fault_handler,
+                       hwpt, QEMU_THREAD_JOINABLE);
+    qemu_thread_create(&hwpt->write_fault_thread, "io fault write",
+                       write_fault_handler,
+                       hwpt, QEMU_THREAD_JOINABLE);
+}
+
 static void smmuv3_config_ste(SMMUDevice *sdev, int sid)
 {
 #ifdef __linux__
@@ -1256,10 +1410,13 @@ static void smmuv3_config_ste(SMMUDevice *sdev, int sid)
 
     ret = smmu_iommu_install_nested_ste(bs, sdev, IOMMU_HWPT_DATA_ARM_SMMUV3,
                                         sizeof(iommu_config), &iommu_config,
-                                        false);
+                                        true);
     if (ret) {
         error_report("Unable to alloc Stage-1 HW Page Table: %d", ret);
     }
+
+    create_fault_handlers(sdev->hwpt);
+
 #endif
 }
 
@@ -1530,10 +1687,23 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_TLBI_EL2_VA:
         case SMMU_CMD_TLBI_EL2_VAA:
         case SMMU_CMD_PRI_RESP:
-        case SMMU_CMD_RESUME:
         case SMMU_CMD_STALL_TERM:
             trace_smmuv3_unhandled_cmd(type);
             break;
+        case SMMU_CMD_RESUME:
+        {
+            uint32_t sid = CMD_SID(&cmd);
+            uint16_t stag = CMD_RESUME_STAG(&cmd);
+            uint8_t action = CMD_RESUME_AC(&cmd);
+            uint64_t addr = CMD_ADDR(&cmd);
+            uint32_t code = IOMMU_PAGE_RESP_SUCCESS;
+
+            if (!action) {
+                code = IOMMU_PAGE_RESP_FAILURE;
+            }
+            smmuv3_notify_stall_resume(bs, sid, stag, code, addr);
+            break;
+        }
         default:
             cmd_error = SMMU_CERROR_ILL;
             break;

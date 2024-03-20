@@ -752,6 +752,15 @@ void smmu_iommu_uninstall_nested_ste(SMMUState *s, SMMUDevice *sdev)
         return;
     }
 
+    if (hwpt->fault_fd) {
+        hwpt->exiting = true;
+        qemu_cond_signal(&hwpt->fault_cond);
+        qemu_thread_join(&hwpt->read_fault_thread);
+        qemu_thread_join(&hwpt->write_fault_thread);
+        io_uring_queue_exit(&hwpt->fault_ring);
+        qemu_mutex_destroy(&hwpt->fault_mutex);
+    }
+
     if (iommufd_device_attach_hwpt(sdev->idev, s->s2_hwpt->hwpt_id)) {
         error_report("Unable to attach dev to stage-2 HW pagetable");
         return;
@@ -801,6 +810,7 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
     }
 
     hwpt->smmu = sdev->smmu;
+    hwpt->sdev = sdev;
     hwpt->iommufd = idev->iommufd->fd;
 
     ret = iommufd_backend_alloc_hwpt(idev->iommufd, idev->dev_id,
