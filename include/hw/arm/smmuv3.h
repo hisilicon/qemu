@@ -72,6 +72,22 @@ typedef enum {
     SMMU_IRQ_GERROR,
 } SMMUIrq;
 
+/*
+ * enum iommu_page_response_code - Return status of fault handlers
+ * @IOMMU_PAGE_RESP_SUCCESS: Fault has been handled and the page tables
+ *      populated, retry the access. This is "Success" in PCI PRI.
+ * @IOMMU_PAGE_RESP_FAILURE: General error. Drop all subsequent faults from
+ *      this device if possible. This is "Response Failure" in PCI PRI.
+ * @IOMMU_PAGE_RESP_INVALID: Could not handle this fault, don't retry the
+ *      access. This is "Invalid Request" in PCI PRI.
+ * (This is from linux kernel(include/linux/iommu.h)
+ */
+enum iommu_page_response_code {
+    IOMMU_PAGE_RESP_SUCCESS = 0,
+    IOMMU_PAGE_RESP_INVALID,
+    IOMMU_PAGE_RESP_FAILURE,
+};
+
 struct SMMUv3Class {
     /*< private >*/
     SMMUBaseClass smmu_base_class;
