@@ -121,6 +121,7 @@ typedef struct SMMUDevice {
     IOMMUMemoryRegion  iommu;
     IOMMUFDDevice      *idev;
     SMMUHwpt           *hwpt;
+    SMMUHwpt           *s2_hwpt;
     bool               nested;
     AddressSpace       as;
     AddressSpace       as_sysmem;
@@ -153,7 +154,6 @@ struct SMMUState {
     MemoryRegion sysmem;
     /* /dev/iommu interface */
     IOMMUFDBackend *iommufd;
-    SMMUHwpt *s2_hwpt;
     bool nested;
 
     GHashTable *smmu_pcibus_by_busptr;

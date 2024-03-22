@@ -620,7 +620,7 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
     SMMUPciBus *sbus = smmu_get_sbus(s, bus);
     SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
 
-    if (s->nested && sdev->nested && !s->s2_hwpt) {
+    if (s->nested && sdev->nested && !sdev->s2_hwpt) {
         return &sdev->as_sysmem;
     } else {
         return &sdev->as;
@@ -633,6 +633,7 @@ static int smmu_dev_set_iommu_device(PCIBus *bus, void *opaque, int devfn,
     SMMUState *s = opaque;
     SMMUPciBus *sbus = smmu_get_sbus(s, bus);
     SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
+    uint32_t s2_hwpt_id;
     int ret;
 
     if (!s->iommufd) {
@@ -653,35 +654,27 @@ static int smmu_dev_set_iommu_device(PCIBus *bus, void *opaque, int devfn,
         return 0;
     }
 
-    if (QLIST_EMPTY(&s->devices_with_nesting)) {
-        uint32_t s2_hwpt_id;
-
-        ret = iommufd_backend_alloc_hwpt(s->iommufd, idev->dev_id,
-                                         idev->ioas_id,
-                                         IOMMU_HWPT_ALLOC_NEST_PARENT,
-                                         IOMMU_HWPT_DATA_NONE, 0, NULL,
-                                         &s2_hwpt_id);
-        if (ret) {
-            error_setg(errp, "failed to allocate an S2 hwpt");
-            return ret;
-        }
-
-        s->s2_hwpt = g_malloc0(sizeof(*s->s2_hwpt));
-        s->s2_hwpt->ioas_id = idev->ioas_id;
-        s->s2_hwpt->iommufd = s->iommufd->fd;
-        s->s2_hwpt->hwpt_id = s2_hwpt_id;
+    ret = iommufd_backend_alloc_hwpt(s->iommufd, idev->dev_id,
+                                     idev->ioas_id,
+                                     IOMMU_HWPT_ALLOC_NEST_PARENT,
+                                     IOMMU_HWPT_DATA_NONE, 0, NULL,
+                                     &s2_hwpt_id);
+    if (ret) {
+        error_setg(errp, "failed to allocate an S2 hwpt");
+        return ret;
     }
 
-    ret = iommufd_device_attach_hwpt(idev, s->s2_hwpt->hwpt_id);
+    ret = iommufd_device_attach_hwpt(idev, s2_hwpt_id);
     if (ret) {
-        if (QLIST_EMPTY(&s->devices_with_nesting)) {
-            iommufd_backend_free_id(s->iommufd, s->s2_hwpt->hwpt_id);
-            g_free(s->s2_hwpt);
-            s->s2_hwpt = NULL;
-        }
+        iommufd_backend_free_id(s->iommufd, s2_hwpt_id);
         error_report("Unable to attach dev to stage-2 HW pagetable: %d", ret);
         return ret;
     }
+
+    sdev->s2_hwpt = g_malloc0(sizeof(*sdev->s2_hwpt));
+    sdev->s2_hwpt->ioas_id = idev->ioas_id;
+    sdev->s2_hwpt->iommufd = s->iommufd->fd;
+    sdev->s2_hwpt->hwpt_id = s2_hwpt_id;
 
     sdev->idev = idev;
     QLIST_INSERT_HEAD(&s->devices_with_nesting, sdev, next);
@@ -717,11 +710,9 @@ static void smmu_dev_unset_iommu_device(PCIBus *bus, void *opaque, int devfn)
     sdev->idev = NULL;
     trace_smmu_unset_iommu_device(devfn, smmu_get_sid(sdev));
 
-    if (QLIST_EMPTY(&s->devices_with_nesting)) {
-        iommufd_backend_free_id(s->iommufd, s->s2_hwpt->hwpt_id);
-        g_free(s->s2_hwpt);
-        s->s2_hwpt = NULL;
-    }
+    iommufd_backend_free_id(s->iommufd, sdev->s2_hwpt->hwpt_id);
+    g_free(sdev->s2_hwpt);
+    sdev->s2_hwpt = NULL;
 }
 
 static const PCIIOMMUOps smmu_ops = {
@@ -762,7 +753,7 @@ void smmu_iommu_uninstall_nested_ste(SMMUState *s, SMMUDevice *sdev)
         return;
     }
 
-    if (iommufd_device_attach_hwpt(sdev->idev, s->s2_hwpt->hwpt_id)) {
+    if (iommufd_device_attach_hwpt(sdev->idev, sdev->s2_hwpt->hwpt_id)) {
         error_report("Unable to attach dev to stage-2 HW pagetable");
         return;
     }
@@ -781,7 +772,7 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
     IOMMUFDDevice *idev;
     int ret;
 
-    if (!s || !sdev || !s->iommufd || !s->s2_hwpt) {
+    if (!s || !sdev || !s->iommufd || !sdev->s2_hwpt) {
         return -ENOENT;
     }
 
@@ -803,7 +794,7 @@ int smmu_iommu_install_nested_ste(SMMUState *s, SMMUDevice *sdev,
     hwpt->iommufd = idev->iommufd->fd;
 
     ret = iommufd_backend_alloc_hwpt(idev->iommufd, idev->dev_id,
-                                     s->s2_hwpt->hwpt_id, 0, data_type,
+                                     sdev->s2_hwpt->hwpt_id, 0, data_type,
                                      data_len, data, &hwpt->hwpt_id);
     if (ret) {
         error_report("Unable to allocate stage-1 HW pagetable: %d", ret);
