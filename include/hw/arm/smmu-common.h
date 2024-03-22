@@ -121,6 +121,7 @@ typedef struct SMMUDevice {
     IOMMUMemoryRegion  iommu;
     IOMMUFDDevice      *idev;
     SMMUHwpt           *hwpt;
+    bool               nested;
     AddressSpace       as;
     AddressSpace       as_sysmem;
     uint32_t           cfg_cache_hits;

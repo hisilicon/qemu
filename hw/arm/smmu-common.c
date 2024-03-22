@@ -620,7 +620,7 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
     SMMUPciBus *sbus = smmu_get_sbus(s, bus);
     SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
 
-    if (s->nested && !s->s2_hwpt) {
+    if (s->nested && sdev->nested && !s->s2_hwpt) {
         return &sdev->as_sysmem;
     } else {
         return &sdev->as;
@@ -640,6 +640,16 @@ static int smmu_dev_set_iommu_device(PCIBus *bus, void *opaque, int devfn,
     }
 
     if (!s->nested) {
+        return 0;
+    }
+
+    /*
+     * VFIO makes a call early on without idev so that
+     * we can handle the address_sapce differently for
+     * nested cases untill dev is attached to s2_hwpt.
+     */
+    if (idev == NULL) {
+        sdev->nested = true;
         return 0;
     }
 
