@@ -3127,11 +3127,6 @@ static void vfio_realize(PCIDevice *pdev, Error **errp)
         }
     }
 
-    if (ret) {
-        error_prepend(errp, "Failed to set iommu_device: ");
-        goto out_teardown;
-    }
-
     ret = vfio_add_capabilities(vdev, errp);
     if (ret) {
         goto out_unset_idev;
