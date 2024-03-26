@@ -58,7 +58,7 @@ unsigned __attribute__((constructor)) cpuinfo_init(void)
 #ifdef CONFIG_LINUX
     unsigned long hwcap = qemu_getauxval(AT_HWCAP);
     info |= (hwcap & HWCAP_ATOMICS ? CPUINFO_LSE : 0);
-    info |= (hwcap & HWCAP_USCAT ? CPUINFO_LSE2 : 0);
+    //info |= (hwcap & HWCAP_USCAT ? CPUINFO_LSE2 : 0);
     info |= (hwcap & HWCAP_AES ? CPUINFO_AES : 0);
     info |= (hwcap & HWCAP_PMULL ? CPUINFO_PMULL : 0);
 
