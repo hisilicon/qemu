@@ -2787,6 +2787,15 @@ test_migrate_precopy_tcp_multifd_qpl_start(QTestState *from,
 }
 #endif /* CONFIG_QPL */
 
+#ifdef CONFIG_UADK
+static void *
+test_migrate_precopy_tcp_multifd_uadk_start(QTestState *from,
+                                            QTestState *to)
+{
+    return test_migrate_precopy_tcp_multifd_start_common(from, to, "uadk");
+}
+#endif /* CONFIG_UADK */
+
 static void test_multifd_tcp_none(void)
 {
     MigrateCommon args = {
@@ -2858,6 +2867,17 @@ static void test_multifd_tcp_qpl(void)
     MigrateCommon args = {
         .listen_uri = "defer",
         .start_hook = test_migrate_precopy_tcp_multifd_qpl_start,
+    };
+    test_precopy_common(&args);
+}
+#endif
+
+#ifdef CONFIG_UADK
+static void test_multifd_tcp_uadk(void)
+{
+    MigrateCommon args = {
+        .listen_uri = "defer",
+        .start_hook = test_migrate_precopy_tcp_multifd_uadk_start,
     };
     test_precopy_common(&args);
 }
@@ -3769,6 +3789,10 @@ int main(int argc, char **argv)
 #ifdef CONFIG_QPL
     migration_test_add("/migration/multifd/tcp/plain/qpl",
                        test_multifd_tcp_qpl);
+#endif
+#ifdef CONFIG_UADK
+    migration_test_add("/migration/multifd/tcp/plain/uadk",
+                       test_multifd_tcp_uadk);
 #endif
 #ifdef CONFIG_GNUTLS
     migration_test_add("/migration/multifd/tcp/tls/psk/match",
