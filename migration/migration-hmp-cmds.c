@@ -639,6 +639,10 @@ void hmp_migrate_set_parameter(Monitor *mon, const QDict *qdict)
         p->has_multifd_zstd_level = true;
         visit_type_uint8(v, param, &p->multifd_zstd_level, &err);
         break;
+    case MIGRATION_PARAMETER_MULTIFD_UADK_LEVEL:
+        p->has_multifd_uadk_level = true;
+        visit_type_uint8(v, param, &p->multifd_uadk_level, &err);
+        break;
     case MIGRATION_PARAMETER_ZERO_PAGE_DETECTION:
         p->has_zero_page_detection = true;
         visit_type_ZeroPageDetection(v, param, &p->zero_page_detection, &err);

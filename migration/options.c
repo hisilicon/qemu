@@ -64,6 +64,8 @@
 #define DEFAULT_MIGRATE_MULTIFD_ZLIB_LEVEL 1
 /* 0: means nocompress, 1: best speed, ... 20: best compress ratio */
 #define DEFAULT_MIGRATE_MULTIFD_ZSTD_LEVEL 1
+/* 0: means nocompress, 1: best speed, ... 15: best compress ratio */
+#define DEFAULT_MIGRATE_MULTIFD_UADK_LEVEL 1
 
 /* Background transfer rate for postcopy, 0 means unlimited, note
  * that page requests can still exceed this limit.
@@ -146,6 +148,9 @@ Property migration_properties[] = {
     DEFINE_PROP_UINT8("multifd-zstd-level", MigrationState,
                       parameters.multifd_zstd_level,
                       DEFAULT_MIGRATE_MULTIFD_ZSTD_LEVEL),
+    DEFINE_PROP_UINT8("multifd-uadk-level", MigrationState,
+                      parameters.multifd_uadk_level,
+                      DEFAULT_MIGRATE_MULTIFD_UADK_LEVEL),
     DEFINE_PROP_SIZE("xbzrle-cache-size", MigrationState,
                       parameters.xbzrle_cache_size,
                       DEFAULT_MIGRATE_XBZRLE_CACHE_SIZE),
@@ -899,6 +904,13 @@ int migrate_multifd_zstd_level(void)
     return s->parameters.multifd_zstd_level;
 }
 
+int migrate_multifd_uadk_level(void)
+{
+    MigrationState *s = migrate_get_current();
+
+    return s->parameters.multifd_uadk_level;
+}
+
 uint8_t migrate_throttle_trigger_threshold(void)
 {
     MigrationState *s = migrate_get_current();
@@ -1030,6 +1042,8 @@ MigrationParameters *qmp_query_migrate_parameters(Error **errp)
     params->multifd_zlib_level = s->parameters.multifd_zlib_level;
     params->has_multifd_zstd_level = true;
     params->multifd_zstd_level = s->parameters.multifd_zstd_level;
+    params->has_multifd_uadk_level = true;
+    params->multifd_uadk_level = s->parameters.multifd_uadk_level;
     params->has_xbzrle_cache_size = true;
     params->xbzrle_cache_size = s->parameters.xbzrle_cache_size;
     params->has_max_postcopy_bandwidth = true;
@@ -1086,6 +1100,7 @@ void migrate_params_init(MigrationParameters *params)
     params->has_multifd_compression = true;
     params->has_multifd_zlib_level = true;
     params->has_multifd_zstd_level = true;
+    params->has_multifd_uadk_level = true;
     params->has_xbzrle_cache_size = true;
     params->has_max_postcopy_bandwidth = true;
     params->has_max_cpu_throttle = true;
@@ -1201,6 +1216,13 @@ bool migrate_params_check(MigrationParameters *params, Error **errp)
         (params->multifd_zstd_level > 20)) {
         error_setg(errp, QERR_INVALID_PARAMETER_VALUE, "multifd_zstd_level",
                    "a value between 0 and 20");
+        return false;
+    }
+
+    if (params->has_multifd_uadk_level &&
+        (params->multifd_uadk_level > 15)) {
+        error_setg(errp, QERR_INVALID_PARAMETER_VALUE, "multifd_uadk_level",
+                   "a value between 0 and 15");
         return false;
     }
 
@@ -1375,6 +1397,9 @@ static void migrate_params_test_apply(MigrateSetParameters *params,
     if (params->has_multifd_zstd_level) {
         dest->multifd_zstd_level = params->multifd_zstd_level;
     }
+    if (params->has_multifd_uadk_level) {
+        dest->multifd_uadk_level = params->multifd_uadk_level;
+    }
     if (params->has_xbzrle_cache_size) {
         dest->xbzrle_cache_size = params->xbzrle_cache_size;
     }
@@ -1519,6 +1544,9 @@ static void migrate_params_apply(MigrateSetParameters *params, Error **errp)
     }
     if (params->has_multifd_zstd_level) {
         s->parameters.multifd_zstd_level = params->multifd_zstd_level;
+    }
+    if (params->has_multifd_uadk_level) {
+        s->parameters.multifd_uadk_level = params->multifd_uadk_level;
     }
     if (params->has_xbzrle_cache_size) {
         s->parameters.xbzrle_cache_size = params->xbzrle_cache_size;

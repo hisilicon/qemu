@@ -890,6 +890,12 @@
 #     speed, and 20 means best compression ratio which will consume
 #     more CPU. Defaults to 1. (Since 5.0)
 #
+# @multifd-uadk-level: Set the compression level to be used in live
+#     migration, the compression level is an integer between 0 and 15,
+#     where 0 means no compression, 1 means the best compression
+#     speed, and 15 means best compression ratio.
+#     Defaults to 1. (Since 9.0)
+#
 # @block-bitmap-mapping: Maps block nodes and bitmaps on them to
 #     aliases for the purpose of dirty bitmap migration.  Such aliases
 #     may for example be the corresponding names on the opposite site.
@@ -949,7 +955,7 @@
            'multifd-channels',
            'xbzrle-cache-size', 'max-postcopy-bandwidth',
            'max-cpu-throttle', 'multifd-compression',
-           'multifd-zlib-level', 'multifd-zstd-level',
+           'multifd-zlib-level', 'multifd-zstd-level', 'multifd-uadk-level',
            'block-bitmap-mapping',
            { 'name': 'x-vcpu-dirty-limit-period', 'features': ['unstable'] },
            'vcpu-dirty-limit',
@@ -1087,6 +1093,12 @@
 #     speed, and 20 means best compression ratio which will consume
 #     more CPU. Defaults to 1. (Since 5.0)
 #
+# @multifd-uadk-level: Set the compression level to be used in live
+#     migration, the compression level is an integer between 0 and 15,
+#     where 0 means no compression, 1 means the best compression
+#     speed, and 15 means best compression ratio.
+#     Defaults to 1. (Since 9.0)
+#
 # @block-bitmap-mapping: Maps block nodes and bitmaps on them to
 #     aliases for the purpose of dirty bitmap migration.  Such aliases
 #     may for example be the corresponding names on the opposite site.
@@ -1166,6 +1178,7 @@
             '*multifd-compression': 'MultiFDCompression',
             '*multifd-zlib-level': 'uint8',
             '*multifd-zstd-level': 'uint8',
+            '*multifd-uadk-level': 'uint8',
             '*block-bitmap-mapping': [ 'BitmapMigrationNodeAlias' ],
             '*x-vcpu-dirty-limit-period': { 'type': 'uint64',
                                             'features': [ 'unstable' ] },
@@ -1314,6 +1327,12 @@
 #     speed, and 9 means best compression ratio which will consume
 #     more CPU. Defaults to 1. (Since 5.0)
 #
+# @multifd-uadk-level: Set the compression level to be used in live
+#     migration, the compression level is an integer between 0 and 15,
+#     where 0 means no compression, 1 means the best compression
+#     speed, and 15 means best compression ratio.
+#     Defaults to 1. (Since 9.0)
+#
 # @multifd-zstd-level: Set the compression level to be used in live
 #     migration, the compression level is an integer between 0 and 20,
 #     where 0 means no compression, 1 means the best compression
@@ -1396,6 +1415,7 @@
             '*multifd-compression': 'MultiFDCompression',
             '*multifd-zlib-level': 'uint8',
             '*multifd-zstd-level': 'uint8',
+            '*multifd-uadk-level': 'uint8',
             '*block-bitmap-mapping': [ 'BitmapMigrationNodeAlias' ],
             '*x-vcpu-dirty-limit-period': { 'type': 'uint64',
                                             'features': [ 'unstable' ] },
