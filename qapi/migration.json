@@ -633,12 +633,15 @@
 #       the deflate compression algorithm and use the Intel In-Memory Analytics
 #       Accelerator(IAA) accelerated compression and decompression. (Since 9.0)
 #
+# @uadk: use UADK library compression method. (Since 9.0)
+#
 # Since: 5.0
 ##
 { 'enum': 'MultiFDCompression',
   'data': [ 'none', 'zlib',
             { 'name': 'zstd', 'if': 'CONFIG_ZSTD' },
-            { 'name': 'qpl', 'if': 'CONFIG_QPL' } ] }
+            { 'name': 'qpl', 'if': 'CONFIG_QPL' },
+            { 'name': 'uadk', 'if': 'CONFIG_UADK' } ] }
 
 ##
 # @MigMode:
