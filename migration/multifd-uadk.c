@@ -189,6 +189,8 @@ static int uadk_send_prepare(MultiFDSendParams *p, Error **errp)
     struct wd_comp_req creq = {0};
     uint8_t *buf = uadk_data->buf;
     int ret = 0;
+    uint32_t total_comp_len = 0;
+    uint32_t total_recv_len = 0;
 
     if (!multifd_send_prepare_common(p)) {
         goto out;
@@ -199,6 +201,7 @@ static int uadk_send_prepare(MultiFDSendParams *p, Error **errp)
     prepare_next_iov(p, uadk_data->buf_hdr, hdr_size);
     p->next_packet_size += hdr_size;
 
+    printf("\n%s: Shameer: hdr_size %d, num pages %d page_size %d\n", __func__, hdr_size, p->pages->normal_num, p->page_size);
     creq.op_type = WD_DIR_COMPRESS;
     for (int i = 0; i < p->pages->normal_num; i++) {
         creq.src = p->pages->block->host + p->pages->offset[i];
@@ -206,6 +209,7 @@ static int uadk_send_prepare(MultiFDSendParams *p, Error **errp)
         creq.dst = buf;
         creq.dst_len = uadk_data->data_size;
 
+	total_recv_len += p->page_size;
         ret = wd_do_comp_sync(uadk_data->handle, &creq);
         if (ret || creq.status) {
             error_setg(errp, "multifd %u: wd_do_comp_sync returned %d",
@@ -218,6 +222,7 @@ static int uadk_send_prepare(MultiFDSendParams *p, Error **errp)
             prepare_next_iov(p, buf, creq.dst_len);
             p->next_packet_size += creq.dst_len;
             buf += creq.dst_len;
+	    total_comp_len += creq.dst_len;
         } else {
             /* The compressed output is larger than input. Send raw data. */
             uadk_data->buf_hdr[i] = cpu_to_be32(uadk_data->data_size);
@@ -226,9 +231,11 @@ static int uadk_send_prepare(MultiFDSendParams *p, Error **errp)
                              uadk_data->data_size);
             p->next_packet_size += uadk_data->data_size;
             buf += uadk_data->data_size;
+	    total_comp_len += uadk_data->data_size;
         }
     }
 
+    printf("%s: Shameer: total_recv_len %d total_comp_len %d\n", __func__, total_recv_len, total_comp_len);
 out:
     p->flags |= MULTIFD_FLAG_ZLIB;
     multifd_send_fill_packet(p);
@@ -293,6 +300,8 @@ static int uadk_recv(MultiFDRecvParams *p, Error **errp)
     uint32_t data_len = 0;
     uint8_t *buf = uadk_data->buf;
     int ret = 0;
+    uint32_t total_decomp_len = 0;
+    uint32_t total_rcvd_len = 0;
 
     if (flags != MULTIFD_FLAG_ZLIB) {
         error_setg(errp, "multifd %u: flags received %x flags expected %x",
@@ -306,6 +315,7 @@ static int uadk_recv(MultiFDRecvParams *p, Error **errp)
         return 0;
     }
 
+    printf("\n%s: Shameer: hdr_len %d in_size %d num pages %d page_size %d\n",__func__, hdr_len, in_size, p->normal_num, p->page_size);
     /* read compressed data lengths */
     assert(hdr_len < in_size);
     ret = qio_channel_read_all(p->c, (void *) uadk_data->buf_hdr,
@@ -333,6 +343,8 @@ static int uadk_recv(MultiFDRecvParams *p, Error **errp)
         if (uadk_data->buf_hdr[i] == uadk_data->data_size) {
             memcpy(p->host + p->normal[i], buf, uadk_data->data_size);
             buf += uadk_data->data_size;
+	    total_rcvd_len += uadk_data->data_size;
+	    total_decomp_len += uadk_data->data_size;
             continue;
         }
         creq.src = buf;
@@ -349,8 +361,10 @@ static int uadk_recv(MultiFDRecvParams *p, Error **errp)
             return -1;
         }
         buf += uadk_data->buf_hdr[i];
+	total_rcvd_len += uadk_data->buf_hdr[i];;
+	total_decomp_len += creq.dst_len;
      }
-
+    printf("%s: Shameer total_rcvd_len %d, total_decomp_len %d\n", __func__, total_rcvd_len, total_decomp_len);
     return 0;
 }
 
