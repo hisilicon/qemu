@@ -1322,11 +1322,9 @@ static void smmuv3_install_nested_ste(SMMUDevice *sdev, int sid)
 }
 
 static gboolean
-smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
+_smmuv3_invalidate_ste(SMMUDevice *sdev, SMMUSIDRange *sid_range)
 {
-    SMMUDevice *sdev = (SMMUDevice *)key;
     uint32_t sid = smmu_get_sid(sdev);
-    SMMUSIDRange *sid_range = (SMMUSIDRange *)user_data;
 
     if (sid < sid_range->start || sid > sid_range->end) {
         return false;
@@ -1335,6 +1333,28 @@ smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
     smmuv3_install_nested_ste(sdev, sid);
     trace_smmuv3_config_cache_inv(sid);
     return true;
+}
+
+static gboolean
+smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
+{
+    return _smmuv3_invalidate_ste((SMMUDevice *)key, (SMMUSIDRange *)user_data);
+}
+
+static void smmuv3_invalidate_nested_ste(SMMUSIDRange *sid_range)
+{
+    SMMUState *bs = sid_range->state;
+    SMMUDevice *sdev;
+
+    if (!bs->viommu) {
+        return;
+    }
+
+    QLIST_FOREACH(sdev, &bs->viommu->device_list, next) {
+        if (smmu_get_sid(sdev)) {
+            _smmuv3_invalidate_ste(sdev, sid_range);
+        }
+    }
 }
 
 static int smmuv3_cmdq_consume(SMMUv3State *s)
@@ -1418,12 +1438,14 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             }
 
             mask = (1ULL << (range + 1)) - 1;
+            sid_range.state = bs;
             sid_range.start = sid & ~mask;
             sid_range.end = sid_range.start + mask;
 
             trace_smmuv3_cmdq_cfgi_ste_range(sid_range.start, sid_range.end);
             g_hash_table_foreach_remove(bs->configs, smmuv3_invalidate_ste,
                                         &sid_range);
+            smmuv3_invalidate_nested_ste(&sid_range);
             break;
         }
         case SMMU_CMD_CFGI_CD:
