@@ -28,21 +28,19 @@ struct wd_data {
     uint32_t *buf_hdr;
 };
 
-static bool uadk_comp_init_done;
-
 static int uadk_alloc_buf(struct wd_data *wd, uint32_t count,
                           uint32_t page_size)
 {
     int flags = MAP_PRIVATE | MAP_POPULATE | MAP_ANONYMOUS;
     int prot = PROT_READ | PROT_WRITE;
 
-    wd->buf = mmap(NULL, count * page_size, prot, flags, -1, 0);
+    wd->buf = mmap(NULL, (count + 1) * page_size, prot, flags, -1, 0);
     if (wd->buf == MAP_FAILED) {
         return -ENOMEM;
     }
 
     wd->buf_hdr = g_new0(uint32_t, count);
-    wd->buf_size = count * page_size;
+    wd->buf_size = (count + 1) * page_size;
     wd->data_size = page_size;
     return 0;
 }
@@ -67,13 +65,10 @@ static struct wd_data *uadk_init_sess(uint32_t count, uint32_t page_size,
     handle_t handle;
     int ret;
 
-    if (!uadk_comp_init_done) {
-        ret = wd_comp_init2(alg, SCHED_POLICY_RR, TASK_HW);
-        if (ret) {
-            error_setg(errp, "multifd: failed wd_comp_init2");
-            return NULL;
-        }
-        uadk_comp_init_done = true;
+    ret = wd_comp_init2(alg, SCHED_POLICY_RR, TASK_HW);
+    if (ret && ret != -WD_EEXIST) {
+        error_setg(errp, "multifd: failed wd_comp_init2");
+        return NULL;
     }
 
     ss.alg_type = WD_ZLIB;
@@ -201,13 +196,12 @@ static int uadk_send_prepare(MultiFDSendParams *p, Error **errp)
     prepare_next_iov(p, uadk_data->buf_hdr, hdr_size);
     p->next_packet_size += hdr_size;
 
-    printf("\n%s: Shameer: hdr_size %d, num pages %d page_size %d\n", __func__, hdr_size, p->pages->normal_num, p->page_size);
     creq.op_type = WD_DIR_COMPRESS;
     for (int i = 0; i < p->pages->normal_num; i++) {
         creq.src = p->pages->block->host + p->pages->offset[i];
         creq.src_len = p->page_size;
         creq.dst = buf;
-        creq.dst_len = uadk_data->data_size;
+        creq.dst_len = uadk_data->data_size * 2;
 
 	total_recv_len += p->page_size;
         ret = wd_do_comp_sync(uadk_data->handle, &creq);
@@ -235,7 +229,6 @@ static int uadk_send_prepare(MultiFDSendParams *p, Error **errp)
         }
     }
 
-    printf("%s: Shameer: total_recv_len %d total_comp_len %d\n", __func__, total_recv_len, total_comp_len);
 out:
     p->flags |= MULTIFD_FLAG_ZLIB;
     multifd_send_fill_packet(p);
@@ -315,7 +308,6 @@ static int uadk_recv(MultiFDRecvParams *p, Error **errp)
         return 0;
     }
 
-    printf("\n%s: Shameer: hdr_len %d in_size %d num pages %d page_size %d\n",__func__, hdr_len, in_size, p->normal_num, p->page_size);
     /* read compressed data lengths */
     assert(hdr_len < in_size);
     ret = qio_channel_read_all(p->c, (void *) uadk_data->buf_hdr,
@@ -364,7 +356,6 @@ static int uadk_recv(MultiFDRecvParams *p, Error **errp)
 	total_rcvd_len += uadk_data->buf_hdr[i];;
 	total_decomp_len += creq.dst_len;
      }
-    printf("%s: Shameer total_rcvd_len %d, total_decomp_len %d\n", __func__, total_rcvd_len, total_decomp_len);
     return 0;
 }
 
