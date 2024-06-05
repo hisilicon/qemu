@@ -13,6 +13,7 @@ system_ss.add([files(
 system_ss.add(when: 'CONFIG_POSIX', if_true: files('rng-random.c'))
 system_ss.add(when: 'CONFIG_POSIX', if_true: files('hostmem-file.c'))
 system_ss.add(when: 'CONFIG_LINUX', if_true: files('hostmem-memfd.c'))
+system_ss.add(when: 'CONFIG_LINUX', if_true: files('host_iommu_device.c'))
 if keyutils.found()
     system_ss.add(keyutils, files('cryptodev-lkcf.c'))
 endif
