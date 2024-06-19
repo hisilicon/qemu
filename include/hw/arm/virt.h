@@ -106,6 +106,9 @@ typedef enum {
     ARM_L3_CACHE
 } ArmCacheType;
 
+/* MMIO region size for SMMUv3 */
+#define SMMU_IO_LEN 0x20000
+
 enum {
     VIRT_FLASH,
     VIRT_MEM,
