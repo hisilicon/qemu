@@ -75,6 +75,16 @@ SMMUTLBEntry *smmu_iotlb_lookup(SMMUState *bs, SMMUTransCfg *cfg,
     uint8_t level = 4 - (inputsize - 4) / stride;
     SMMUTLBEntry *entry = NULL;
 
+    /*
+     * Stage-1 translation with a nested SMMU in general uses HW IOTLB. However,
+     * KVM still requests for an iommu address space for an MSI fixup by looking
+     * up stage-1 page table. Make sure we don't go through the emulated pathway
+     * so that the emulated iotlb will not need any invalidation.
+     */
+    if (bs->nested) {
+        return NULL;
+    }
+
     while (level <= 3) {
         uint64_t subpage_size = 1ULL << level_shift(level, tt->granule_sz);
         uint64_t mask = subpage_size - 1;
@@ -109,6 +119,16 @@ void smmu_iotlb_insert(SMMUState *bs, SMMUTransCfg *cfg, SMMUTLBEntry *new)
 {
     SMMUIOTLBKey *key = g_new0(SMMUIOTLBKey, 1);
     uint8_t tg = (new->granule - 10) / 2;
+
+    /*
+     * Stage-1 translation with a nested SMMU in general uses HW IOTLB. However,
+     * KVM still requests for an iommu address space for an MSI fixup by looking
+     * up stage-1 page table. Make sure we don't go through the emulated pathway
+     * so that the emulated iotlb will not need any invalidation.
+     */
+    if (bs->nested) {
+        return;
+    }
 
     if (g_hash_table_size(bs->iotlb) >= SMMU_IOTLB_MAX_SIZE) {
         smmu_iotlb_inv_all(bs);
