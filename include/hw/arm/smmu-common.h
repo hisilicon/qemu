@@ -107,6 +107,11 @@ typedef struct SMMUTransCfg {
     struct SMMUS2Cfg s2cfg;
 } SMMUTransCfg;
 
+typedef struct PendFaultEntry {
+    struct iommu_hwpt_pgfault fault;
+    QTAILQ_ENTRY(PendFaultEntry) entry;
+} PendFaultEntry;
+
 typedef struct PageRespEntry {
     struct iommu_hwpt_page_response resp;
     QTAILQ_ENTRY(PageRespEntry) entry;
@@ -120,13 +125,13 @@ typedef struct SMMUHwpt {
     int iommufd;
     /* fault handling */
     uint32_t fault_fd;
-    struct iommu_hwpt_pgfault *pending_fault;
     struct io_uring fault_ring;
     QemuThread read_fault_thread;
     QemuThread write_fault_thread;
     QemuMutex fault_mutex;
     QemuCond fault_cond;
     QTAILQ_HEAD(, PageRespEntry) pageresp;
+    QTAILQ_HEAD(, PendFaultEntry) pendfault;
     bool exiting;
 } SMMUHwpt;
 

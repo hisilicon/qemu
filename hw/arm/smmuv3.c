@@ -1222,9 +1222,10 @@ static void smmuv3_range_inval(SMMUState *s, Cmd *cmd)
     }
 }
 
-static void smmuv3_report_iommu_fault(SMMUHwpt *hwpt, void *buf)
+static void smmuv3_report_iommu_fault(SMMUHwpt *hwpt,
+                                      struct iommu_hwpt_pgfault *fault)
 {
-    struct iommu_hwpt_pgfault *fault = buf;
+    PendFaultEntry *pend;
     SMMUDevice *sdev = hwpt->sdev;
     SMMUv3State *s3 = sdev->smmu;
     uint32_t sid = smmu_get_sid(sdev);
@@ -1250,16 +1251,11 @@ static void smmuv3_report_iommu_fault(SMMUHwpt *hwpt, void *buf)
         info.u.f_translation.ind = true;
     }
 
-    if (!hwpt->pending_fault) {
-        struct iommu_hwpt_pgfault *pend =
-               g_new0(struct iommu_hwpt_pgfault, 1);
-
-        memcpy(pend, fault, sizeof(*fault));
-        hwpt->pending_fault = pend;
-    } else {
-        warn_report("We have a live pending fault, drop fault");
-        return;
-    }
+    pend = g_new0(PendFaultEntry, 1);
+    memcpy(&pend->fault, fault, sizeof(*fault));
+    qemu_mutex_lock(&hwpt->fault_mutex);
+    QTAILQ_INSERT_TAIL(&hwpt->pendfault, pend, entry);
+    qemu_mutex_unlock(&hwpt->fault_mutex);
     smmuv3_record_event(s3, &info);
     return;
 }
@@ -1269,8 +1265,10 @@ static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
 {
     SMMUDevice *sdev = smmu_find_sdev(bs, sid);
     PageRespEntry *msg;
+    PendFaultEntry *pend, *tmp;
     SMMUHwpt *hwpt;
     IOMMUFDDevice *idev;
+    bool found = false;
 
     if (!sdev) {
         return;
@@ -1281,24 +1279,30 @@ static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
     msg = g_new0(PageRespEntry, 1);
 
     /* Kernel expects addr and pasid info for page response */
-    if (hwpt->pending_fault && hwpt->pending_fault->grpid == stag) {
-        msg->resp.addr = hwpt->pending_fault->addr;
-        msg->resp.pasid = hwpt->pending_fault->pasid;
-        g_free(hwpt->pending_fault);
-        hwpt->pending_fault = NULL;
-    } else {
-        warn_report("No matching pending fault for resume, drop!");
-        return;
+    qemu_mutex_lock(&hwpt->fault_mutex);
+    QTAILQ_FOREACH_SAFE(pend, &hwpt->pendfault, entry, tmp) {
+        if (pend->fault.grpid == stag) {
+            QTAILQ_REMOVE(&hwpt->pendfault, pend, entry);
+            msg->resp.addr = pend->fault.addr;
+            msg->resp.pasid = pend->fault.pasid;
+            msg->resp.size = sizeof(struct iommu_hwpt_page_response);
+            msg->resp.dev_id = idev->dev_id;
+            msg->resp.grpid = stag;
+            msg->resp.code = code;
+            QTAILQ_INSERT_TAIL(&hwpt->pageresp, msg, entry);
+            qemu_cond_signal(&hwpt->fault_cond);
+
+            g_free(pend);
+            found = true;
+            break;
+        }
     }
 
-    msg->resp.size = sizeof(struct iommu_hwpt_page_response);
-    msg->resp.dev_id = idev->dev_id;
-    msg->resp.grpid = stag;
-    msg->resp.code = code;
-    qemu_mutex_lock(&hwpt->fault_mutex);
-    QTAILQ_INSERT_TAIL(&hwpt->pageresp, msg, entry);
-    qemu_cond_signal(&hwpt->fault_cond);
     qemu_mutex_unlock(&hwpt->fault_mutex);
+    if (!found) {
+        warn_report("No matching fault for resume(stag 0x%x), drop!", stag);
+        return;
+    }
 }
 
 static void *write_fault_handler(void *opaque)
@@ -1375,6 +1379,7 @@ static void create_fault_handlers(SMMUHwpt *hwpt)
     qemu_mutex_init(&hwpt->fault_mutex);
     qemu_cond_init(&hwpt->fault_cond);
     QTAILQ_INIT(&hwpt->pageresp);
+    QTAILQ_INIT(&hwpt->pendfault);
     qemu_thread_create(&hwpt->read_fault_thread, "io fault read",
                        read_fault_handler,
                        hwpt, QEMU_THREAD_JOINABLE);
