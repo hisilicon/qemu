@@ -200,11 +200,12 @@ static int iommufd_cdev_attach_ioas_hwpt(VFIODevice *vbasedev, uint32_t id,
         error_setg_errno(errp, errno,
                          "[iommufd=%d] error attach %s (%d) to id=%d",
                          iommufd, vbasedev->name, vbasedev->fd, id);
-    } else {
-        trace_iommufd_cdev_attach_ioas_hwpt(iommufd, vbasedev->name,
-                                            vbasedev->fd, id);
+        return -errno;
     }
-    return ret;
+
+    trace_iommufd_cdev_attach_ioas_hwpt(iommufd, vbasedev->name,
+                                            vbasedev->fd, id);
+    return 0;
 }
 
 static int iommufd_cdev_detach_ioas_hwpt(VFIODevice *vbasedev, Error **errp)
