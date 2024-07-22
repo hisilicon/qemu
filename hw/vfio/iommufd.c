@@ -114,6 +114,11 @@ static void iommufd_cdev_unbind_and_disconnect(VFIODevice *vbasedev)
     iommufd_backend_disconnect(vbasedev->iommufd);
 }
 
+static bool iommufd_hwpt_dirty_tracking(VFIOIOASHwpt *hwpt)
+{
+    return hwpt && hwpt->hwpt_flags & IOMMU_HWPT_ALLOC_DIRTY_TRACKING;
+}
+
 static int iommufd_cdev_getfd(const char *sysfs_path, Error **errp)
 {
     long int ret = -ENOTTY;
@@ -256,8 +261,20 @@ static int iommufd_cdev_autodomains_get(VFIODevice *vbasedev,
         } else {
             vbasedev->hwpt = hwpt;
             QLIST_INSERT_HEAD(&hwpt->device_list, vbasedev, hwpt_next);
+            vbasedev->iommu_dirty_tracking = iommufd_hwpt_dirty_tracking(hwpt);
             return 0;
         }
+    }
+
+    /*
+     * This is quite early and VFIO Migration state isn't yet fully
+     * initialized, thus rely only on IOMMU hardware capabilities as to
+     * whether IOMMU dirty tracking is going to be requested. Later
+     * vfio_migration_realize() may decide to use VF dirty tracking
+     * instead.
+     */
+    if (vbasedev->hiod->caps.hw_caps & IOMMU_HW_CAP_DIRTY_TRACKING) {
+        flags = IOMMU_HWPT_ALLOC_DIRTY_TRACKING;
     }
 
     if (!iommufd_backend_alloc_hwpt(iommufd, vbasedev->devid,
@@ -269,6 +286,7 @@ static int iommufd_cdev_autodomains_get(VFIODevice *vbasedev,
 
     hwpt = g_malloc0(sizeof(*hwpt));
     hwpt->hwpt_id = hwpt_id;
+    hwpt->hwpt_flags = flags;
     QLIST_INIT(&hwpt->device_list);
 
     ret = iommufd_cdev_attach_ioas_hwpt(vbasedev, hwpt->hwpt_id, errp);
@@ -279,8 +297,16 @@ static int iommufd_cdev_autodomains_get(VFIODevice *vbasedev,
     }
 
     vbasedev->hwpt = hwpt;
+    vbasedev->iommu_dirty_tracking = iommufd_hwpt_dirty_tracking(hwpt);
     QLIST_INSERT_HEAD(&hwpt->device_list, vbasedev, hwpt_next);
     QLIST_INSERT_HEAD(&container->hwpt_list, hwpt, next);
+    container->bcontainer.dirty_pages_supported |=
+                               vbasedev->iommu_dirty_tracking;
+    if (container->bcontainer.dirty_pages_supported &&
+        !vbasedev->iommu_dirty_tracking) {
+        warn_report("IOMMU instance for device %s doesn't support dirty tracking",
+                    vbasedev->name);
+    }
     return 0;
 }
 
