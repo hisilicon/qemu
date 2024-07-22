@@ -1659,22 +1659,17 @@ int vfio_attach_device(char *name, VFIODevice *vbasedev,
 
     assert(ops);
 
+    if (!vbasedev->mdev) {
+         hiod = HOST_IOMMU_DEVICE(object_new(ops->hiod_typename));
+         vbasedev->hiod = hiod;
+    }
+
     ret = ops->attach_device(name, vbasedev, as, errp);
     if (ret) {
+        object_unref(hiod);
+        vbasedev->hiod = NULL;
         return ret;
     }
-
-    if (vbasedev->mdev) {
-        return true;
-    }
-
-    hiod = HOST_IOMMU_DEVICE(object_new(ops->hiod_typename));
-    if (!HOST_IOMMU_DEVICE_GET_CLASS(hiod)->realize(hiod, vbasedev, errp)) {
-        object_unref(hiod);
-        ops->detach_device(vbasedev);
-        return -1;
-    }
-    vbasedev->hiod = hiod;
 
     return 0;
 }
