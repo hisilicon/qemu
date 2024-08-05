@@ -827,6 +827,22 @@ static void vfio_iommu_iommufd_class_init(ObjectClass *klass, void *data)
     vioc->query_dirty_bitmap = iommufd_query_dirty_bitmap;
 };
 
+static bool hiod_iommufd_vfio_realize_late(HostIOMMUDevice *hiod, void *opaque,
+                                           Error **errp)
+{
+    VFIODevice *vdev = opaque;
+    VFIOIOMMUFDContainer *container = container_of(vdev->bcontainer,
+                                                   VFIOIOMMUFDContainer,
+                                                   bcontainer);
+    HostIOMMUDeviceIOMMUFD *idev = HOST_IOMMU_DEVICE_IOMMUFD(hiod);
+
+    idev->iommufd = vdev->iommufd;
+    idev->devid = vdev->devid;
+    idev->ioas_id = container->ioas_id;
+
+    return true;
+}
+
 static bool hiod_iommufd_vfio_realize(HostIOMMUDevice *hiod, void *opaque,
                                       Error **errp)
 {
@@ -858,6 +874,7 @@ static void hiod_iommufd_vfio_class_init(ObjectClass *oc, void *data)
     HostIOMMUDeviceClass *hiodc = HOST_IOMMU_DEVICE_CLASS(oc);
 
     hiodc->realize = hiod_iommufd_vfio_realize;
+    hiodc->realize_late = hiod_iommufd_vfio_realize_late;
 };
 
 static const TypeInfo types[] = {
