@@ -196,7 +196,7 @@ void acpi_dsdt_add_gpex(Aml *scope, struct GPEXConfig *cfg)
                 aml_append(dev, method);
             }
 
-            acpi_dsdt_add_pci_route_table(dev, cfg->irq, scope, bus_num);
+            acpi_dsdt_add_pci_route_table(dev, cfg->irq, dev, bus_num);
 
             /*
              * Resources defined for PXBs are composed of the following parts:
@@ -233,7 +233,7 @@ void acpi_dsdt_add_gpex(Aml *scope, struct GPEXConfig *cfg)
         aml_append(dev, method);
     }
 
-    acpi_dsdt_add_pci_route_table(dev, cfg->irq, scope, 0);
+    acpi_dsdt_add_pci_route_table(dev, cfg->irq, dev, 0);
 
     method = aml_method("_CBA", 0, AML_NOTSERIALIZED);
     aml_append(method, aml_return(aml_int(cfg->ecam.base)));
