@@ -747,10 +747,55 @@ static void aarch64_max_initfn(Object *obj)
     }
 }
 
+static void print_kunpeng_regs(ARMCPU *cpu)
+{
+    printf("%s: Shameer: initial midr 0x%lx\n", __func__, cpu->midr);
+    printf("%s: Shameer: initial revidr x%x\n", __func__, cpu->revidr);
+    printf("%s: Shameer: initial ctr x%lx\n", __func__, cpu->ctr);
+    printf("%s: Shameer: initial isar.id_aa64isar0 0x%lx\n", __func__, cpu->isar.id_aa64isar0);
+    printf("%s: Shameer: initial isar.id_aa64isar1 0x%lx\n", __func__, cpu->isar.id_aa64isar1);
+    printf("%s: Shameer: initial isar.id_aa64isar2 0x%lx\n", __func__, cpu->isar.id_aa64isar2);
+    printf("%s: Shameer: initial isar.id_aa64pfr0 0x%lx\n", __func__, cpu->isar.id_aa64pfr0);
+    printf("%s: Shameer: initial isar.id_aa64pfr1 0x%lx\n", __func__, cpu->isar.id_aa64pfr1);
+    printf("%s: Shameer: initial isar.id_aa64dfr0 0x%lx\n", __func__, cpu->isar.id_aa64dfr0);
+    printf("%s: Shameer: initial isar.id_aa64dfr1 0x%lx\n", __func__, cpu->isar.id_aa64dfr1);
+    printf("%s: Shameer: initial isar.id_aa64mmfr0 0x%lx\n", __func__, cpu->isar.id_aa64mmfr0);
+    printf("%s: Shameer: initial isar.id_aa64mmfr1 0x%lx\n", __func__, cpu->isar.id_aa64mmfr1);
+    printf("%s: Shameer: initial isar.id_aa64mmfr2 0x%lx\n", __func__, cpu->isar.id_aa64mmfr2);
+    printf("%s: Shameer: initial isar.id_aa64mmfr3 0x%lx\n", __func__, cpu->isar.id_aa64mmfr3);
+    printf("%s: Shameer: initial isar.id_aa64zfr0 0x%lx\n", __func__, cpu->isar.id_aa64zfr0);
+}
+
+static void aarch64_kunpeng_920_initfn(Object *obj)
+{
+    ARMCPU *cpu = ARM_CPU(obj);
+
+    if (kvm_enabled()) {
+        aarch64_host_initfn(obj);
+        print_kunpeng_regs(cpu);
+        /*
+         * Set to 920B values.
+         * ToDo: We need to compare host returned values and check against
+         * writable_masks to see whether we can modify. Also need to check MIDR.
+         */
+        cpu->isar.id_aa64pfr0 = 0x1101111123111111;
+        cpu->isar.id_aa64pfr1 = 0x21;
+        cpu->isar.id_aa64isar2 = 0;
+        cpu->isar.id_aa64mmfr1 = 0x110212122;
+        cpu->isar.id_aa64dfr0 = 0xf010305408;
+        cpu->isar.id_aa64zfr0 = 0x0110100000100000;
+        cpu->ctr = 0x84448004;
+        return;
+    }
+}
+
 static const ARMCPUInfo aarch64_cpus[] = {
     { .name = "cortex-a57",         .initfn = aarch64_a57_initfn },
     { .name = "cortex-a53",         .initfn = aarch64_a53_initfn },
     { .name = "max",                .initfn = aarch64_max_initfn },
+#if defined(CONFIG_KVM)
+    { .name = "Kunpeng-920",        .initfn = aarch64_kunpeng_920_initfn },
+#endif
 #if defined(CONFIG_KVM) || defined(CONFIG_HVF)
     { .name = "host",               .initfn = aarch64_host_initfn },
 #endif

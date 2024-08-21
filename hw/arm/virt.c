@@ -3052,6 +3052,9 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
 #if defined(CONFIG_KVM) || defined(CONFIG_HVF)
         ARM_CPU_TYPE_NAME("host"),
 #endif /* CONFIG_KVM || CONFIG_HVF */
+#if defined(CONFIG_KVM)
+        ARM_CPU_TYPE_NAME("Kunpeng-920"),
+#endif /* CONFIG_KVM */
 #endif /* TARGET_AARCH64 */
         ARM_CPU_TYPE_NAME("max"),
         NULL

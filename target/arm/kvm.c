@@ -57,6 +57,7 @@ typedef struct ARMHostCPUFeatures {
     uint64_t features;
     uint32_t target;
     const char *dtb_compatible;
+    uint64_t *writable_masks;
 } ARMHostCPUFeatures;
 
 static ARMHostCPUFeatures arm_host_cpu_features;
@@ -259,6 +260,8 @@ static bool kvm_arm_get_host_cpu_features(ARMHostCPUFeatures *ahcf)
      */
     struct kvm_vcpu_init init = { .target = -1, };
 
+    struct reg_mask_range range;
+    uint64_t *writable_masks;
     /*
      * Ask for SVE if supported, so that we can query ID_AA64ZFR0,
      * which is otherwise RAZ.
@@ -335,6 +338,8 @@ static bool kvm_arm_get_host_cpu_features(ARMHostCPUFeatures *ahcf)
         err |= read_sys_reg64(fdarray[2], &ahcf->isar.id_aa64mmfr3,
                               ARM64_SYS_REG(3, 0, 0, 7, 3));
 
+        err |= read_sys_reg64(fdarray[2], &ahcf->isar.ctr,
+                              ARM64_SYS_REG(3, 3, 0, 0, 1));
         /*
          * Note that if AArch32 support is not present in the host,
          * the AArch32 sysregs are present to be read, but will
@@ -435,6 +440,15 @@ static bool kvm_arm_get_host_cpu_features(ARMHostCPUFeatures *ahcf)
         }
     }
 
+    writable_masks = g_new0(uint64_t, KVM_ARM_FEATURE_ID_RANGE_SIZE);
+    memset(&range, 0, sizeof(range));
+    range.addr = (__u64)writable_masks;
+    err = ioctl(fdarray[1], KVM_ARM_GET_REG_WRITABLE_MASKS, &range);
+    printf("%s: Shameer KVM_ARM_GET_REG_WRITABLE_MASKS ret %d\n", __func__, err);
+    if (!err) {
+        ahcf->writable_masks = writable_masks;
+    }
+
     kvm_arm_destroy_scratch_host_vcpu(fdarray);
 
     if (err < 0) {
@@ -475,6 +489,8 @@ void kvm_arm_set_cpu_features_from_host(ARMCPU *cpu)
     cpu->kvm_target = arm_host_cpu_features.target;
     cpu->dtb_compatible = arm_host_cpu_features.dtb_compatible;
     cpu->isar = arm_host_cpu_features.isar;
+    cpu->writable_masks = arm_host_cpu_features.writable_masks;
+    cpu->ctr = arm_host_cpu_features.isar.ctr;
     env->features = arm_host_cpu_features.features;
 }
 
@@ -923,6 +939,17 @@ bool write_kvmstate_to_list(ARMCPU *cpu)
     return ok;
 }
 
+static bool is_invariant_reg(uint64_t regidx)
+{
+    /* ToDo: We need a better way to handle this */
+    if (regidx == 0x603000000013c000) {
+        /* MIDR */
+        return true;
+    }
+
+    return false;
+}
+
 bool write_list_to_kvmstate(ARMCPU *cpu, int level)
 {
     CPUState *cs = CPU(cpu);
@@ -945,6 +972,10 @@ bool write_list_to_kvmstate(ARMCPU *cpu, int level)
             break;
         case KVM_REG_SIZE_U64:
             ret = kvm_set_one_reg(cs, regidx, cpu->cpreg_values + i);
+            if (ret && is_invariant_reg(regidx)) {
+                printf("%s: Shameer: invariant regidx 0x%lx: Get host value: 0x%lx\n", __func__, regidx, *(cpu->cpreg_values + i));
+                ret = kvm_get_one_reg(cs, regidx, cpu->cpreg_values + i);
+            }
             break;
         default:
             g_assert_not_reached();
@@ -954,6 +985,7 @@ bool write_list_to_kvmstate(ARMCPU *cpu, int level)
              * "you tried to set a register which is constant with
              * a different value from what it actually contains".
              */
+            printf("%s: Shameer: i 0x%x regidx 0x%lx failed to set val 0x%lx\n", __func__, i, regidx, *(cpu->cpreg_values + i));
             ok = false;
         }
     }

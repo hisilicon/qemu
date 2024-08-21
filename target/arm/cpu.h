@@ -1031,6 +1031,7 @@ struct ArchCPU {
         uint64_t id_aa64zfr0;
         uint64_t id_aa64smfr0;
         uint64_t reset_pmcr_el0;
+        uint64_t ctr;
     } isar;
     uint64_t midr;
     uint32_t revidr;
@@ -1104,6 +1105,8 @@ struct ArchCPU {
 
     /* Generic timer counter frequency, in Hz */
     uint64_t gt_cntfrq_hz;
+
+    uint64_t *writable_masks;
 };
 
 typedef struct ARMCPUInfo {
