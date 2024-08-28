@@ -745,12 +745,27 @@ static void aarch64_max_initfn(Object *obj)
     }
 }
 
+static void aarch64_kunpeng_920_initfn(Object *obj)
+{
+    ARMCPU *cpu = ARM_CPU(obj);
+
+    if (kvm_enabled()) {
+        aarch64_host_initfn(obj);
+    } else {
+        cpu->host_cpu_probe_failed = true;
+        return;
+    }
+}
+
 static const ARMCPUInfo aarch64_cpus[] = {
     { .name = "cortex-a57",         .initfn = aarch64_a57_initfn },
     { .name = "cortex-a53",         .initfn = aarch64_a53_initfn },
     { .name = "max",                .initfn = aarch64_max_initfn },
 #if defined(CONFIG_KVM) || defined(CONFIG_HVF)
     { .name = "host",               .initfn = aarch64_host_initfn },
+#endif
+#if defined(CONFIG_KVM)
+    { .name = "Kunpeng-920",        .initfn = aarch64_kunpeng_920_initfn },
 #endif
 };
 
