@@ -186,6 +186,7 @@ void kvm_arm_set_cpu_features_from_host(ARMCPU *cpu)
     cpu->kvm_target = arm_host_cpu_features.target;
     cpu->dtb_compatible = arm_host_cpu_features.dtb_compatible;
     cpu->isar = arm_host_cpu_features.isar;
+    cpu->writable_masks = arm_host_cpu_features.writable_masks;
     env->features = arm_host_cpu_features.features;
 }
 

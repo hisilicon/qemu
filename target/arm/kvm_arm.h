@@ -231,6 +231,7 @@ typedef struct ARMHostCPUFeatures {
     uint64_t features;
     uint32_t target;
     const char *dtb_compatible;
+    uint64_t *writable_masks;
 } ARMHostCPUFeatures;
 
 /**

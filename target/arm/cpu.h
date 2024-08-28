@@ -1114,6 +1114,8 @@ struct ArchCPU {
 
     /* Generic timer counter frequency, in Hz */
     uint64_t gt_cntfrq_hz;
+
+    uint64_t *writable_masks;
 };
 
 typedef struct ARMCPUInfo {
