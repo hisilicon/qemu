@@ -755,6 +755,11 @@ static void aarch64_kunpeng_920_initfn(Object *obj)
         cpu->host_cpu_probe_failed = true;
         return;
     }
+
+    if (kunpeng920_update_registers(cpu)) {
+        cpu->kvm_target = QEMU_KVM_ARM_TARGET_NONE;
+        return;
+    }
 }
 
 static const ARMCPUInfo aarch64_cpus[] = {
