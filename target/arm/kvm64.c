@@ -240,6 +240,8 @@ bool kvm_arm_get_host_cpu_features(ARMHostCPUFeatures *ahcf)
      */
     struct kvm_vcpu_init init = { .target = -1, };
 
+    struct reg_mask_range range;
+    uint64_t *writable_masks;
     /*
      * Ask for SVE if supported, so that we can query ID_AA64ZFR0,
      * which is otherwise RAZ.
@@ -411,6 +413,15 @@ bool kvm_arm_get_host_cpu_features(ARMHostCPUFeatures *ahcf)
             err |= read_sys_reg64(fdarray[2], &ahcf->isar.id_aa64zfr0,
                                   ARM64_SYS_REG(3, 0, 0, 4, 4));
         }
+    }
+
+    writable_masks = g_new0(uint64_t, KVM_ARM_FEATURE_ID_RANGE_SIZE);
+    memset(&range, 0, sizeof(range));
+    range.addr = (__u64)writable_masks;
+    if (!ioctl(fdarray[1], KVM_ARM_GET_REG_WRITABLE_MASKS, &range)) {
+        ahcf->writable_masks = writable_masks;
+    } else {
+        g_free(writable_masks);
     }
 
     kvm_arm_destroy_scratch_host_vcpu(fdarray);
