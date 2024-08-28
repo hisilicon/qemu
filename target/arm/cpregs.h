@@ -1077,6 +1077,15 @@ static inline void define_cortex_a72_a57_a53_cp_reginfo(ARMCPU *cpu) { }
 void define_cortex_a72_a57_a53_cp_reginfo(ARMCPU *cpu);
 #endif
 
+#ifdef CONFIG_KVM
+int kunpeng920_update_registers(ARMCPU *cpu);
+#else
+static inline int kunpeng920_update_registers(ARMCPU *cpu)
+{
+    return -EINVAL;
+}
+#endif
+
 CPAccessResult access_tvm_trvm(CPUARMState *, const ARMCPRegInfo *, bool);
 
 #endif /* TARGET_ARM_CPREGS_H */
