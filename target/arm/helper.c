@@ -116,6 +116,25 @@ static bool raw_accessors_invalid(const ARMCPRegInfo *ri)
     return true;
 }
 
+
+static bool is_id_register(const ARMCPRegInfo *ri)
+{
+    /*
+     * (Op0, Op1, CRn, CRm, Op2) of ID registers is (3, 0, 0, crm, op2),
+     * where 1<=crm<8, 0<=op2<8.
+     */
+    if (ri->opc0 == 3 && ri->opc1 == 0 && ri->crn == 0 &&
+        ri->crm > 0 && ri->crm < 8) {
+        return true;
+    } else if (ri->opc0 == 3 && ri->opc1 == 3 && ri->crn == 0 &&
+               ri->crm == 0 && ri->opc2 == 1) {
+        /* CTR_EL0 */
+        return true;
+    }
+
+    return false;
+}
+
 bool write_cpustate_to_list(ARMCPU *cpu, bool kvm_sync)
 {
     /* Write the coprocessor state from cpu->env to the (index,value) list. */
@@ -132,30 +151,34 @@ bool write_cpustate_to_list(ARMCPU *cpu, bool kvm_sync)
             ok = false;
             continue;
         }
-        if (ri->type & ARM_CP_NO_RAW) {
+        if (ri->type & ARM_CP_NO_RAW && !(kvm_sync && is_id_register(ri))) {
             continue;
         }
 
         newval = read_raw_cp_reg(&cpu->env, ri);
         if (kvm_sync) {
-            /*
-             * Only sync if the previous list->cpustate sync succeeded.
-             * Rather than tracking the success/failure state for every
-             * item in the list, we just recheck "does the raw write we must
-             * have made in write_list_to_cpustate() read back OK" here.
-             */
-            uint64_t oldval = cpu->cpreg_values[i];
+            if (is_id_register(ri)) {
+                /*ToDo: Check we need to attempt a KVM sync here */
+            } else {
+                /*
+                 * Only sync if the previous list->cpustate sync succeeded.
+                 * Rather than tracking the success/failure state for every
+                 * item in the list, we just recheck "does the raw write we must
+                 * have made in write_list_to_cpustate() read back OK" here.
+                 */
+                uint64_t oldval = cpu->cpreg_values[i];
 
-            if (oldval == newval) {
-                continue;
+                if (oldval == newval) {
+                    continue;
+                }
+
+                write_raw_cp_reg(&cpu->env, ri, oldval);
+                if (read_raw_cp_reg(&cpu->env, ri) != oldval) {
+                    continue;
+                }
+
+                write_raw_cp_reg(&cpu->env, ri, newval);
             }
-
-            write_raw_cp_reg(&cpu->env, ri, oldval);
-            if (read_raw_cp_reg(&cpu->env, ri) != oldval) {
-                continue;
-            }
-
-            write_raw_cp_reg(&cpu->env, ri, newval);
         }
         cpu->cpreg_values[i] = newval;
     }
