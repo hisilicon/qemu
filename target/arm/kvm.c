@@ -581,6 +581,18 @@ bool write_kvmstate_to_list(ARMCPU *cpu)
     return ok;
 }
 
+static bool is_invariant_reg(uint64_t regidx)
+{
+    /* ToDo: We need a better way to handle this */
+    if ((regidx == ARM64_SYS_REG(3, 0, 0, 0, 0)) || /*MIDR*/
+        (regidx == ARM64_SYS_REG(3, 1, 0, 0, 7)) || /*AIDR*/
+        (regidx == KVM_REG_ARM_SMCCC_ARCH_WORKAROUND_3)) {
+        return true;
+    }
+
+    return false;
+}
+
 bool write_list_to_kvmstate(ARMCPU *cpu, int level)
 {
     CPUState *cs = CPU(cpu);
@@ -603,6 +615,9 @@ bool write_list_to_kvmstate(ARMCPU *cpu, int level)
             break;
         case KVM_REG_SIZE_U64:
             ret = kvm_set_one_reg(cs, regidx, cpu->cpreg_values + i);
+            if (ret && cpu->ignore_invariant_reg && is_invariant_reg(regidx)) {
+                ret = kvm_get_one_reg(cs, regidx, cpu->cpreg_values + i);
+            }
             break;
         default:
             g_assert_not_reached();

@@ -1116,6 +1116,7 @@ struct ArchCPU {
     uint64_t gt_cntfrq_hz;
 
     uint64_t *writable_masks;
+    bool ignore_invariant_reg;
 };
 
 typedef struct ARMCPUInfo {

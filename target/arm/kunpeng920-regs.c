@@ -37,5 +37,10 @@ int kunpeng920_update_registers(ARMCPU *cpu)
     cpu->isar.id_aa64zfr0 = 0;
     cpu->ctr = 0x84448004;
 
+    /*
+     * MIDR/REVIDR/AIDR are invariant registers and not writable.
+     * Ignore any difefrences between 920B and 920C for now.
+     */
+    cpu->ignore_invariant_reg = true;
     return 0;
 }
