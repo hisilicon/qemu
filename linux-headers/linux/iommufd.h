@@ -800,6 +800,12 @@ enum iommu_hwpt_pgfault_flags {
 	IOMMU_PGFAULT_FLAGS_LAST_PAGE		= (1 << 1),
 };
 
+enum iommu_page_response_code {
+        IOMMU_PAGE_RESP_SUCCESS = 0,
+        IOMMU_PAGE_RESP_INVALID,
+        IOMMU_PAGE_RESP_FAILURE,
+};
+
 /**
  * enum iommu_hwpt_pgfault_perm - perm bits for struct iommu_hwpt_pgfault
  * @IOMMU_PGFAULT_PERM_READ: request for read permission

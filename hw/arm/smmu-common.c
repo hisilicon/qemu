@@ -25,6 +25,7 @@
 #include "qapi/error.h"
 #include "qemu/jhash.h"
 #include "qemu/module.h"
+#include <sys/ioctl.h>
 
 #include "qemu/error-report.h"
 #include "hw/arm/smmu-common.h"
@@ -1130,6 +1131,12 @@ void smmu_dev_uninstall_nested_ste(SMMUDevice *sdev, bool abort)
         hwpt_id = sdev->viommu->bypass_hwpt_id;
     }
 
+    if (s1_hwpt && s1_hwpt->out_fault_fd) {
+        s1_hwpt->exiting = true;
+        qemu_thread_join(&s1_hwpt->thread);
+        qemu_mutex_destroy(&s1_hwpt->fault_mutex);
+    }
+
     if (!host_iommu_device_iommufd_attach_hwpt(idev, hwpt_id, NULL)) {
         return;
     }
@@ -1140,7 +1147,7 @@ void smmu_dev_uninstall_nested_ste(SMMUDevice *sdev, bool abort)
 }
 
 int smmu_dev_install_nested_ste(SMMUDevice *sdev, uint32_t data_type,
-                                uint32_t data_len, void *data)
+                                uint32_t data_len, void *data, void * (*handler)(void *))
 {
     SMMUViommu *viommu = sdev->viommu;
     SMMUS1Hwpt *s1_hwpt = sdev->s1_hwpt;
@@ -1160,21 +1167,30 @@ int smmu_dev_install_nested_ste(SMMUDevice *sdev, uint32_t data_type,
     }
 
     s1_hwpt->smmu = sdev->smmu;
+    s1_hwpt->sdev = sdev;
     s1_hwpt->viommu = viommu;
     s1_hwpt->iommufd = idev->iommufd;
 
     if (!iommufd_backend_alloc_hwpt(idev->iommufd, idev->devid,
-                                    viommu->core->viommu_id, 0, data_type,
+                                    viommu->core->viommu_id, IOMMU_HWPT_FAULT_ID_VALID, data_type,
                                     data_len, data, &s1_hwpt->hwpt_id, NULL)) {
         goto free;
     }
+    
 
     if (!host_iommu_device_iommufd_attach_hwpt(idev, s1_hwpt->hwpt_id, NULL)) {
         goto free_hwpt;
     }
 
+    
     sdev->s1_hwpt = s1_hwpt;
 
+    if (s1_hwpt->out_fault_fd) {
+        qemu_mutex_init(&s1_hwpt->fault_mutex);
+        QTAILQ_INIT(&s1_hwpt->pageresp);
+        qemu_thread_create(&s1_hwpt->thread, "fault handler", handler,
+                           s1_hwpt, QEMU_THREAD_JOINABLE);
+    }
     return 0;
 free_hwpt:
     iommufd_backend_free_id(idev->iommufd, s1_hwpt->hwpt_id);

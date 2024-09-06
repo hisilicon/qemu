@@ -225,6 +225,22 @@ bool iommufd_backend_alloc_hwpt(IOMMUFDBackend *be, uint32_t dev_id,
         .data_uptr = (uintptr_t)data_ptr,
     };
 
+	printf("gzf %s flags=%x\n", __func__, flags);
+	if (flags & IOMMU_HWPT_FAULT_ID_VALID) {
+
+		struct iommu_fault_alloc cmd = {
+			.size = sizeof(cmd),
+		};
+
+		ret = ioctl(fd, IOMMU_FAULT_QUEUE_ALLOC, &cmd);
+		if (ret) {
+			ret = -errno;
+			error_report("IOMMU_FAULT_ALLOC failed: %m");
+		} else {
+			alloc_hwpt.fault_id = cmd.out_fault_id;
+		}
+	}
+
     ret = ioctl(fd, IOMMU_HWPT_ALLOC, &alloc_hwpt);
     trace_iommufd_backend_alloc_hwpt(fd, dev_id, pt_id, flags, data_type,
                                      data_len, (uintptr_t)data_ptr,
