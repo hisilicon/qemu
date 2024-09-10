@@ -418,9 +418,9 @@ struct iommu_hwpt_arm_smmuv3 {
  * @IOMMU_HWPT_DATA_ARM_SMMUV3: ARM SMMUv3 Context Descriptor Table
  */
 enum iommu_hwpt_data_type {
-	IOMMU_HWPT_DATA_NONE,
-	IOMMU_HWPT_DATA_VTD_S1,
-	IOMMU_HWPT_DATA_ARM_SMMUV3,
+        IOMMU_HWPT_DATA_NONE = 0,
+        IOMMU_HWPT_DATA_VTD_S1 = 1,
+        IOMMU_HWPT_DATA_ARM_SMMUV3 = 2,
 };
 
 /**
@@ -457,16 +457,17 @@ enum iommu_hwpt_data_type {
  * must be given.
  */
 struct iommu_hwpt_alloc {
-	__u32 size;
-	__u32 flags;
-	__u32 dev_id;
-	__u32 pt_id;
-	__u32 out_hwpt_id;
-	__u32 __reserved;
-	__u32 data_type;
-	__u32 data_len;
-	__u32 fault_id;
-	__aligned_u64 data_uptr;
+        __u32 size;
+        __u32 flags;
+        __u32 dev_id;
+        __u32 pt_id;
+        __u32 out_hwpt_id;
+        __u32 __reserved;
+        __u32 data_type;
+        __u32 data_len;
+        __aligned_u64 data_uptr;
+        __u32 fault_id;
+        __u32 __reserved2;
 };
 #define IOMMU_HWPT_ALLOC _IO(IOMMUFD_TYPE, IOMMUFD_CMD_HWPT_ALLOC)
 
@@ -682,6 +683,7 @@ struct iommu_hwpt_get_dirty_bitmap {
  */
 enum iommu_hwpt_invalidate_data_type {
 	IOMMU_HWPT_INVALIDATE_DATA_VTD_S1,
+	IOMMU_HWPT_INVALIDATE_DATA_ARM_SMMUV3 = 1,
 };
 
 /**
