@@ -1419,7 +1419,7 @@ static void smmuv3_config_ste(SMMUDevice *sdev, int sid)
     iommu_config.ste[0] = (uint64_t)ste.word[0] | (uint64_t)ste.word[1] << 32;
     iommu_config.ste[1] = (uint64_t)ste.word[2] | (uint64_t)ste.word[3] << 32;
     /* V | S1FMT | S1CTXPTR | S1CDMAX */
-    iommu_config.ste[0] &= 0xf80ffffffffffff1ULL;
+    iommu_config.ste[0] &= 0xf80fffffffffffffULL;
     /* S1DSS | S1CIR | S1COR | S1CSH | S1STALLD | EATS */
     iommu_config.ste[1] &= 0x580000ffULL;
     trace_smmuv3_config_ste(sid, iommu_config.ste[0], iommu_config.ste[1]);
@@ -1471,7 +1471,7 @@ static int smmuv3_invalidate_cache(SMMUState *s, Cmd *cmds, uint32_t *ncmds, uin
         if (!sdev->hwpt || !sdev->idev)
             continue;
         ntlbi = *ncmds;
-        ret = smmu_iommu_invalidate_cache(sdev, IOMMU_HWPT_DATA_ARM_SMMUV3,
+        ret = smmu_iommu_invalidate_cache(sdev, IOMMU_HWPT_INVALIDATE_DATA_ARM_SMMUV3,
                                           sizeof(*cmds), ncmds, cmds);
         if (ret || ntlbi != *ncmds || *cmd_error) {
             error_report("%s failed: ret=%d, ntlbi=%d, done=%d, error=0x%x",
