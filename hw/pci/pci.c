@@ -2802,6 +2802,19 @@ void pci_device_unset_iommu_device(PCIDevice *dev)
     }
 }
 
+bool pci_device_get_pasid_cap(PCIDevice *dev)
+{
+    PCIBus *iommu_bus;
+
+    pci_device_get_iommu_bus_devfn(dev, &iommu_bus, NULL, NULL);
+    if (iommu_bus && iommu_bus->iommu_ops->get_pasid_cap) {
+        return iommu_bus->iommu_ops->get_pasid_cap(pci_get_bus(dev),
+                                                   iommu_bus->iommu_opaque,
+                                                   dev->devfn);
+    }
+    return false;
+}
+
 void pci_setup_iommu(PCIBus *bus, const PCIIOMMUOps *ops, void *opaque)
 {
     /*
