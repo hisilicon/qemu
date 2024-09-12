@@ -21,6 +21,7 @@
 #include "qemu/osdep.h"
 #include CONFIG_DEVICES /* CONFIG_IOMMUFD */
 #include <linux/vfio.h>
+#include <linux/iommufd.h>
 #include <sys/ioctl.h>
 
 #include "hw/hw.h"
@@ -2346,6 +2347,33 @@ static void vfio_add_ext_cap(VFIOPCIDevice *vdev)
             pcie_add_capability(pdev, cap_id, cap_ver, next, size);
         }
 
+    }
+
+    {
+        HostIOMMUDeviceCaps *caps = &vdev->vbasedev.hiod->caps;
+
+        /*
+         * TODO: Add option for enabling pasid at a safe offset, this adds the
+         * pasid capability in the end of the PCIE config space.
+	  */
+        if (caps->max_pasid_log2 && pci_device_get_pasid_cap(&vdev->pdev)) {
+            uint16_t pasid_caps = (caps->max_pasid_log2 << 8) & PCI_PASID_CAP_WIDTH;
+
+            if (caps->hw_caps & IOMMU_HW_CAP_PCI_PASID_EXEC) {
+                pasid_caps |= PCI_PASID_CAP_EXEC;
+            }
+
+            if (caps->hw_caps & IOMMU_HW_CAP_PCI_PASID_PRIV) {
+                pasid_caps |= PCI_PASID_CAP_PRIV;
+            }
+
+            pcie_pasid_init(pdev,
+                            PCIE_CONFIG_SPACE_SIZE - PCI_EXT_CAP_PASID_SIZEOF,
+                            pasid_caps);
+
+            /* PASID capability is fully emulated by QEMU */
+            memset(vdev->emulated_config_bits + pdev->exp.pasid_cap, 0xff, 8);
+        }
     }
 
     /* Cleanup chain head ID if necessary */
