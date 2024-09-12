@@ -245,13 +245,14 @@ static int iommufd_cdev_attach_ioas_hwpt(VFIODevice *vbasedev, uint32_t id,
         .flags = 0,
         .pt_id = id,
     };
-
+printf("gzf %s\n", __func__);
     /* Attach device to an IOAS or hwpt within iommufd */
     if (ioctl(vbasedev->fd, VFIO_DEVICE_ATTACH_IOMMUFD_PT, &attach_data)) {
         error_setg_errno(errp, errno,
                          "[iommufd=%d] error attach %s (%d) to id=%d",
                          iommufd, vbasedev->name, vbasedev->fd, id);
-        return -errno;
+        printf("ATTACH_IOMMUFD_PT fail\n");
+	return -errno;
     }
 
     trace_iommufd_cdev_attach_ioas_hwpt(iommufd, vbasedev->name,
@@ -326,7 +327,7 @@ static bool iommufd_cdev_autodomains_get(VFIODevice *vbasedev,
     if (!iommufd_backend_alloc_hwpt(iommufd, vbasedev->devid,
                                     container->ioas_id, flags,
                                     IOMMU_HWPT_DATA_NONE, 0, NULL,
-                                    &hwpt_id, errp)) {
+                                    &hwpt_id, NULL, errp)) {
         return false;
     }
 
@@ -807,7 +808,7 @@ host_iommu_device_iommufd_vfio_attach_hwpt(HostIOMMUDeviceIOMMUFD *idev,
                                            uint32_t hwpt_id, Error **errp)
 {
     VFIODevice *vbasedev = HOST_IOMMU_DEVICE(idev)->agent;
-
+printf("gzf %s\n", __func__);
     return !iommufd_cdev_attach_ioas_hwpt(vbasedev, hwpt_id, errp);
 }
 

@@ -2537,7 +2537,7 @@ static int vtd_create_s1_hwpt(HostIOMMUDeviceIOMMUFD *idev,
 
     if (!iommufd_backend_alloc_hwpt(idev->iommufd, idev->devid,
                                     s2_hwpt_id, 0, IOMMU_HWPT_DATA_VTD_S1,
-                                    sizeof(vtd), &vtd, &hwpt_id, errp)) {
+                                    sizeof(vtd), &vtd, &hwpt_id, NULL, errp)) {
         return -EINVAL;
     }
 
@@ -2694,7 +2694,7 @@ static int vtd_device_attach_container(VTDHostIOMMUDevice *vtd_hiod,
                                      container->ioas_id,
                                      IOMMU_HWPT_ALLOC_NEST_PARENT,
                                      IOMMU_HWPT_DATA_NONE,
-                                     0, NULL, &s2_hwpt_id, errp)) {
+                                     0, NULL, &s2_hwpt_id, NULL, errp)) {
         return -EINVAL;
     }
 

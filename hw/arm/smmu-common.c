@@ -928,7 +928,7 @@ static bool smmu_dev_attach_viommu(SMMUDevice *sdev,
     if (!iommufd_backend_alloc_hwpt(idev->iommufd, idev->devid, idev->ioas_id,
                                     IOMMU_HWPT_ALLOC_NEST_PARENT,
                                     IOMMU_HWPT_DATA_NONE, 0, NULL,
-                                    &s2_hwpt_id, errp)) {
+                                    &s2_hwpt_id, NULL, errp)) {
         error_setg(errp, "failed to allocate an S2 hwpt");
         return false;
     }
@@ -953,7 +953,7 @@ static bool smmu_dev_attach_viommu(SMMUDevice *sdev,
                                     viommu->core->viommu_id, 0,
                                     IOMMU_HWPT_DATA_ARM_SMMUV3,
                                     sizeof(abort_data), &abort_data,
-                                    &viommu->abort_hwpt_id, errp)) {
+                                    &viommu->abort_hwpt_id, NULL, errp)) {
         error_setg(errp, "failed to allocate an abort pagetable");
         goto free_viommu_core;
     }
@@ -962,7 +962,7 @@ static bool smmu_dev_attach_viommu(SMMUDevice *sdev,
                                     viommu->core->viommu_id, 0,
                                     IOMMU_HWPT_DATA_ARM_SMMUV3,
                                     sizeof(bypass_data), &bypass_data,
-                                    &viommu->bypass_hwpt_id, errp)) {
+                                    &viommu->bypass_hwpt_id, NULL, errp)) {
         error_setg(errp, "failed to allocate a bypass pagetable");
         goto free_abort_hwpt;
     }
@@ -1173,17 +1173,20 @@ int smmu_dev_install_nested_ste(SMMUDevice *sdev, uint32_t data_type,
 
     if (!iommufd_backend_alloc_hwpt(idev->iommufd, idev->devid,
                                     viommu->core->viommu_id, IOMMU_HWPT_FAULT_ID_VALID, data_type,
-                                    data_len, data, &s1_hwpt->hwpt_id, NULL)) {
+                                    data_len, data, &s1_hwpt->hwpt_id, &s1_hwpt->out_fault_fd, NULL)) {
+	    printf("alloc hwpt fail\n"); 
         goto free;
     }
-    
 
     if (!host_iommu_device_iommufd_attach_hwpt(idev, s1_hwpt->hwpt_id, NULL)) {
-        goto free_hwpt;
+        printf("attach hwpt fail\n");
+	goto free_hwpt;
     }
 
     
     sdev->s1_hwpt = s1_hwpt;
+
+    printf("gzf %s s1_hwpt->out_fault_fd=%d\n", __func__, s1_hwpt->out_fault_fd);
 
     if (s1_hwpt->out_fault_fd) {
         qemu_mutex_init(&s1_hwpt->fault_mutex);
