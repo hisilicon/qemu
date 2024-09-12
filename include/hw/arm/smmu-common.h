@@ -276,7 +276,7 @@ void smmu_inv_notifiers_all(SMMUState *s);
 
 /* IOMMUFD helpers */
 int smmu_dev_get_info(SMMUDevice *sdev, uint32_t *data_type,
-                      uint32_t data_len, void *data);
+                      uint32_t data_len, uint8_t *pasid, void *data);
 void smmu_dev_uninstall_nested_ste(SMMUDevice *sdev, bool abort);
 int smmu_dev_install_nested_ste(SMMUDevice *sdev, uint32_t data_type,
                                 uint32_t data_len, void *data,

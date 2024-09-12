@@ -264,6 +264,7 @@ static void smmuv3_nested_init_regs(SMMUv3State *s)
     SMMUDevice *sdev;
     uint32_t data_type;
     uint32_t val;
+    uint8_t pasid;
     int ret;
 
     if (!bs->nested || !bs->viommu) {
@@ -280,7 +281,8 @@ static void smmuv3_nested_init_regs(SMMUv3State *s)
         goto out;
     }
 
-    ret = smmu_dev_get_info(sdev, &data_type, sizeof(sdev->info), &sdev->info);
+    ret = smmu_dev_get_info(sdev, &data_type, sizeof(sdev->info), &pasid,
+                            &sdev->info);
     if (ret) {
         error_report("failed to get SMMU device info");
         return;

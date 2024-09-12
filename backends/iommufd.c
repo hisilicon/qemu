@@ -326,7 +326,8 @@ bool iommufd_backend_get_dirty_bitmap(IOMMUFDBackend *be,
 
 bool iommufd_backend_get_device_info(IOMMUFDBackend *be, uint32_t devid,
                                      uint32_t *type, void *data, uint32_t len,
-                                     uint64_t *caps, Error **errp)
+                                     uint64_t *caps, uint8_t *max_pasid_log2,
+                                     Error **errp)
 {
     struct iommu_hw_info info = {
         .size = sizeof(info),
@@ -344,6 +345,7 @@ bool iommufd_backend_get_device_info(IOMMUFDBackend *be, uint32_t devid,
     *type = info.out_data_type;
     g_assert(caps);
     *caps = info.out_capabilities;
+    *max_pasid_log2 = info.out_max_pasid_log2;
 
     return true;
 }

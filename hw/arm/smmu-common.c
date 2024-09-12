@@ -852,7 +852,7 @@ SMMUDevice *smmu_find_sdev(SMMUState *s, uint32_t sid)
 
 /* IOMMUFD helpers */
 int smmu_dev_get_info(SMMUDevice *sdev, uint32_t *data_type,
-                      uint32_t data_len, void *data)
+                      uint32_t data_len, uint8_t *pasid, void *data)
 {
     uint64_t caps;
 
@@ -862,7 +862,7 @@ int smmu_dev_get_info(SMMUDevice *sdev, uint32_t *data_type,
 
     return !iommufd_backend_get_device_info(sdev->idev->iommufd,
                                             sdev->idev->devid, data_type, data,
-                                            data_len, &caps, NULL);
+                                            data_len, &caps, pasid, NULL);
 }
 
 void smmu_dev_uninstall_nested_ste(SMMUDevice *sdev, bool abort)
