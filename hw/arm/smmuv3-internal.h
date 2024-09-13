@@ -382,6 +382,7 @@ enum { /* Command completion notification */
 #define CMD_VMID(x)         extract32((x)->word[1], 0 , 16)
 #define CMD_ASID(x)         extract32((x)->word[1], 16, 16)
 #define CMD_RESUME_STAG(x)  extract32((x)->word[2], 0 , 16)
+#define CMD_COOKIE(x)       extract32((x)->word[2], 16, 15)
 #define CMD_RESP(x)         extract32((x)->word[2], 11, 2)
 #define CMD_LEAF(x)         extract32((x)->word[2], 0 , 1)
 #define CMD_TTL(x)          extract32((x)->word[2], 8 , 2)
@@ -486,6 +487,7 @@ typedef struct SMMUEventInfo {
             bool stall;
             uint16_t stag;
             uint32_t ssid;
+            uint32_t cookie;
             bool ssv;
             bool s2;
             dma_addr_t addr;
@@ -520,6 +522,7 @@ typedef struct SMMUEventInfo {
 #define EVT_SET_SSID(x, v)  ((x)->word[0] = deposit32((x)->word[0], 12, 20, v))
 #define EVT_SET_SID(x, v)   ((x)->word[1] = v)
 #define EVT_SET_STAG(x, v)  ((x)->word[2] = deposit32((x)->word[2], 0 , 16, v))
+#define EVT_SET_COOKIE(x, v)  ((x)->word[2] = deposit32((x)->word[2], 16 , 15, v))
 #define EVT_SET_STALL(x, v) ((x)->word[2] = deposit32((x)->word[2], 31, 1 , v))
 #define EVT_SET_PNU(x, v)   ((x)->word[3] = deposit32((x)->word[3], 1 , 1 , v))
 #define EVT_SET_IND(x, v)   ((x)->word[3] = deposit32((x)->word[3], 2 , 1 , v))

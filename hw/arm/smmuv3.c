@@ -238,6 +238,7 @@ void smmuv3_record_event(SMMUv3State *s, SMMUEventInfo *info)
         EVT_SET_IND(&evt, info->u.f_walk_eabt.ind);
         EVT_SET_CLASS(&evt, info->u.f_walk_eabt.class);
         EVT_SET_ADDR2(&evt, info->u.f_walk_eabt.addr2);
+        EVT_SET_COOKIE(&evt, info->u.f_walk_eabt.cookie);
         break;
     case SMMU_EVT_F_CFG_CONFLICT:
         EVT_SET_SSID(&evt, info->u.f_cfg_conflict.ssid);
@@ -1375,13 +1376,17 @@ static int smmuv3_report_iommu_fault(SMMUS1Hwpt *hwpt, void *buf)
     uint32_t sid = smmu_get_sid(sdev);
     SMMUEventInfo info = {0};
 
+	printf("gzf %s\n", __func__);
+
     info.sid = sid;
     info.type = SMMU_EVT_F_TRANSLATION;
     info.u.f_translation.addr = fault->addr;
     info.u.f_translation.stall = true;
     info.u.f_translation.ssid = fault->pasid;
     info.u.f_translation.stag = fault->grpid;
+    info.u.f_translation.cookie = fault->cookie;
 
+	printf("gzf %s info.u.f_translation.cookie=%d\n", __func__, info.u.f_translation.cookie);
     if (fault->flags | IOMMU_PGFAULT_FLAGS_PASID_VALID) {
         info.u.f_translation.ssv = true;
     }
@@ -1412,6 +1417,7 @@ static void *fault_handler(void *opaque)
     struct iommu_hwpt_pgfault *buf;
     int ret;
 
+	printf("gzf %s\n", __func__);
     buf = g_new0(struct iommu_hwpt_pgfault, 1);
     ret = io_uring_queue_init(1, &ring, 0);
 
@@ -1422,6 +1428,7 @@ static void *fault_handler(void *opaque)
         io_uring_sqe_set_data(sqe, buf);
         io_uring_submit(&ring);
 
+	printf("gzf %s inside\n", __func__);
         /* read and process cqe event */
         ret = io_uring_wait_cqe(&ring, &cqe);
         if (ret == 0) {
@@ -1447,6 +1454,7 @@ static void *fault_handler(void *opaque)
             QTAILQ_REMOVE(&hwpt->pageresp, msg, entry);
             g_free(msg);
 
+	printf("gzf %s write\n", __func__);
             sqe = io_uring_get_sqe(&ring);
             io_uring_prep_write(sqe, hwpt->out_fault_fd, resp,
                                 sizeof(struct iommu_hwpt_page_response), 0);
@@ -1619,12 +1627,15 @@ static int smmuv3_batch_cmds(SMMUState *bs, SMMUCommandBatch *batch,
 }
 
 static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
-                                       uint32_t stag, uint32_t code)
+                                       uint32_t stag, uint32_t code,
+				       uint32_t cookie)
 {
     SMMUDevice *sdev = smmu_find_sdev(bs, sid);
     PageRespEntry *msg;
     SMMUS1Hwpt *hwpt;
     //HostIOMMUDeviceIOMMUFD *idev;
+
+    printf("gzf %s cookie =%d\n", __func__, cookie);
 
     if (!sdev) {
         return;
@@ -1639,6 +1650,7 @@ static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
     //msg->resp.dev_id = idev->dev_id;
     //msg->resp.grpid = stag;
     msg->resp.code = code;
+    msg->resp.cookie = code;
 
     qemu_mutex_lock(&hwpt->fault_mutex);
     QTAILQ_INSERT_TAIL(&hwpt->pageresp, msg, entry);
@@ -1889,6 +1901,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         case SMMU_CMD_RESUME:
         {
             uint32_t sid = CMD_SID(&cmd);
+            uint32_t cookie = CMD_COOKIE(&cmd);
             uint16_t stag = CMD_RESUME_STAG(&cmd);
             uint8_t action = CMD_RESUME_AC(&cmd);
             uint32_t code = IOMMU_PAGE_RESP_INVALID;
@@ -1896,7 +1909,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             if (action) {
                 code = IOMMU_PAGE_RESP_SUCCESS;
             }
-            smmuv3_notify_stall_resume(bs, sid, stag, code);
+            smmuv3_notify_stall_resume(bs, sid, stag, code, cookie);
             break;
         }
         default:
