@@ -1367,9 +1367,10 @@ static void smmuv3_range_inval(SMMUState *s, Cmd *cmd, SMMUStage stage)
     }
 }
 
-static int smmuv3_report_iommu_fault(SMMUS1Hwpt *hwpt, void *buf)
+static void smmuv3_report_iommu_fault(SMMUS1Hwpt *hwpt,
+                                      struct iommu_hwpt_pgfault *fault)
 {
-    struct iommu_hwpt_pgfault *fault = buf;
+    PendFaultEntry *pend;
     SMMUDevice *sdev = hwpt->sdev;
     SMMUv3State *s3 = sdev->smmu;
     uint32_t sid = smmu_get_sid(sdev);
@@ -1395,71 +1396,136 @@ static int smmuv3_report_iommu_fault(SMMUS1Hwpt *hwpt, void *buf)
         info.u.f_translation.ind = true;
     }
 
+    pend = g_new0(PendFaultEntry, 1);
+    memcpy(&pend->fault, fault, sizeof(*fault));
+    qemu_mutex_lock(&hwpt->fault_mutex);
+    QTAILQ_INSERT_TAIL(&hwpt->pendfault, pend, entry);
+    qemu_mutex_unlock(&hwpt->fault_mutex);
     smmuv3_record_event(s3, &info);
-    return 0;
+    return;
 }
 
-/*
- * ToDo: This is a basic first try using io_uring. Need
- * optimising to avoid the loop read.
- */
-static void *fault_handler(void *opaque)
+static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
+                                       uint32_t stag, uint32_t code)
+{
+    SMMUDevice *sdev = smmu_find_sdev(bs, sid);
+    PageRespEntry *msg;
+    PendFaultEntry *pend, *tmp;
+    SMMUS1Hwpt *hwpt;
+    bool found = false;
+
+    if (!sdev) {
+        return;
+    }
+
+    hwpt = sdev->s1_hwpt;
+    msg = g_new0(PageRespEntry, 1);
+
+    /* Kernel expects addr and pasid info for page response */
+    qemu_mutex_lock(&hwpt->fault_mutex);
+    QTAILQ_FOREACH_SAFE(pend, &hwpt->pendfault, entry, tmp) {
+        if (pend->fault.grpid == stag) {
+            QTAILQ_REMOVE(&hwpt->pendfault, pend, entry);
+            msg->resp.cookie = pend->fault.cookie;
+            msg->resp.code = code;
+            QTAILQ_INSERT_TAIL(&hwpt->pageresp, msg, entry);
+            qemu_cond_signal(&hwpt->fault_cond);
+
+            g_free(pend);
+            found = true;
+            break;
+        }
+    }
+
+    qemu_mutex_unlock(&hwpt->fault_mutex);
+    if (!found) {
+        warn_report("No matching fault for resume(stag 0x%x), drop!", stag);
+        return;
+    }
+}
+
+static void *write_fault_handler(void *opaque)
 {
     SMMUS1Hwpt *hwpt = opaque;
-    struct io_uring ring;
-    struct io_uring_sqe *sqe;
-    struct io_uring_cqe *cqe;
-    struct iommu_hwpt_pgfault *buf;
+    PageRespEntry *msg, *tmp;
+    struct iommu_hwpt_page_response *resp;
     int ret;
 
-    buf = g_new0(struct iommu_hwpt_pgfault, 1);
-    ret = io_uring_queue_init(1, &ring, 0);
-
+    resp = g_new0(struct iommu_hwpt_page_response, 1);
     while (!hwpt->exiting) {
-        sqe = io_uring_get_sqe(&ring);
-        io_uring_prep_read(sqe, hwpt->out_fault_fd, buf,
-                           sizeof(struct iommu_hwpt_pgfault), 0);
-        io_uring_sqe_set_data(sqe, buf);
-        io_uring_submit(&ring);
-
-        /* read and process cqe event */
-        ret = io_uring_wait_cqe(&ring, &cqe);
-        if (ret == 0) {
-            signed int len = cqe->res;
-            void *data = io_uring_cqe_get_data(cqe);
-
-            if (len > 0) {
-                smmuv3_report_iommu_fault(hwpt, data);
-            }
-        }
-
-        io_uring_cqe_seen(&ring, cqe);
-
         /* Check we have any pending responses */
         qemu_mutex_lock(&hwpt->fault_mutex);
-        if (!QTAILQ_EMPTY(&hwpt->pageresp)) {
-            struct iommu_hwpt_page_response *resp;
-            PageRespEntry *msg;
-
-            resp = g_new0(struct iommu_hwpt_page_response, 1);
-            msg = QTAILQ_FIRST(&hwpt->pageresp);
-            memcpy(resp, &msg->resp, sizeof(*resp));
+        qemu_cond_wait(&hwpt->fault_cond, &hwpt->fault_mutex);
+        QTAILQ_FOREACH_SAFE(msg, &hwpt->pageresp, entry, tmp) {
             QTAILQ_REMOVE(&hwpt->pageresp, msg, entry);
+            memcpy(resp, &msg->resp, sizeof(*resp));
             g_free(msg);
 
-            sqe = io_uring_get_sqe(&ring);
-            io_uring_prep_write(sqe, hwpt->out_fault_fd, resp,
-                                sizeof(struct iommu_hwpt_page_response), 0);
-            io_uring_sqe_set_data(sqe, resp);
-            io_uring_submit(&ring);
+            ret = write(hwpt->out_fault_fd, resp, sizeof(*resp));
+            if (ret != sizeof(*resp)) {
+                warn_report("Write resp[cookie 0x%x] fail %d",
+                             resp->cookie, ret);
+            }
         }
         qemu_mutex_unlock(&hwpt->fault_mutex);
     }
-
-    io_uring_queue_exit(&ring);
+    g_free(resp);
     return NULL;
 }
 
+static void *read_fault_handler(void *opaque)
+{
+    SMMUS1Hwpt *hwpt = opaque;
+    struct io_uring_sqe *sqe;
+    struct io_uring_cqe *cqe;
+    struct iommu_hwpt_pgfault *fault;
+    struct io_uring *ring = &hwpt->fault_ring;
+    void *data;
+    int ret;
+
+    fault = g_new0(struct iommu_hwpt_pgfault, 1);
+    while (!hwpt->exiting) {
+        sqe = io_uring_get_sqe(ring);
+        io_uring_prep_read(sqe, hwpt->out_fault_fd, fault,
+                           sizeof(*fault), 0);
+        io_uring_sqe_set_data(sqe, fault);
+        io_uring_submit(ring);
+
+        ret = io_uring_wait_cqe(ring, &cqe);
+        if (ret == 0) {
+            if (cqe->res == sizeof(*fault)) {
+                data = io_uring_cqe_get_data(cqe);
+                smmuv3_report_iommu_fault(hwpt, data);
+            }
+        } else {
+            warn_report("Read fault[hwpt_id 0x%x] failed %d",
+                         hwpt->hwpt_id, ret);
+        }
+        io_uring_cqe_seen(ring, cqe);
+    }
+    g_free(fault);
+    return NULL;
+}
+
+static void create_fault_handlers(SMMUS1Hwpt *hwpt)
+{
+    if (!hwpt->out_fault_fd) {
+        warn_report("No fault fd for hwpt id: %d", hwpt->hwpt_id);
+        return;
+    }
+
+    io_uring_queue_init(1024, &hwpt->fault_ring, 0);
+    qemu_mutex_init(&hwpt->fault_mutex);
+    qemu_cond_init(&hwpt->fault_cond);
+    QTAILQ_INIT(&hwpt->pageresp);
+    QTAILQ_INIT(&hwpt->pendfault);
+    qemu_thread_create(&hwpt->read_fault_thread, "io fault read",
+                       read_fault_handler,
+                       hwpt, QEMU_THREAD_JOINABLE);
+    qemu_thread_create(&hwpt->write_fault_thread, "io fault write",
+                       write_fault_handler,
+                       hwpt, QEMU_THREAD_JOINABLE);
+}
 static void smmuv3_install_nested_ste(SMMUDevice *sdev, int sid)
 {
 #ifdef __linux__
@@ -1468,6 +1534,7 @@ static void smmuv3_install_nested_ste(SMMUDevice *sdev, int sid)
     struct iommu_hwpt_arm_smmuv3 nested_data = {};
     SMMUv3State *s = sdev->smmu;
     SMMUState *bs = &s->smmu_state;
+    bool req_fault_fd = false;
     uint32_t config;
     STE ste;
     int ret;
@@ -1509,11 +1576,20 @@ static void smmuv3_install_nested_ste(SMMUDevice *sdev, int sid)
     /* S1DSS | S1CIR | S1COR | S1CSH | S1STALLD | EATS */
     nested_data.ste[1] &= 0x380000ffULL;
 
+    if (STE_S1CDMAX(&ste)) {
+        req_fault_fd = true;
+    }
+
     ret = smmu_dev_install_nested_ste(sdev, IOMMU_HWPT_DATA_ARM_SMMUV3,
-                                      sizeof(nested_data), &nested_data, fault_handler);
+                                      sizeof(nested_data), &nested_data,
+                                      req_fault_fd);
     if (ret) {
         error_report("Unable to install nested STE=%16LX:%16LX, ret=%d",
                      nested_data.ste[1], nested_data.ste[0], ret);
+    }
+
+    if (req_fault_fd) {
+        create_fault_handlers(sdev->s1_hwpt);
     }
 
     trace_smmuv3_install_nested_ste(sid, nested_data.ste[1], nested_data.ste[0]);
@@ -1616,33 +1692,6 @@ static int smmuv3_batch_cmds(SMMUState *bs, SMMUCommandBatch *batch,
     batch->cmds[batch->ncmds] = *cmd;
     batch->cons[batch->ncmds++] = *cons;
     return 0;
-}
-
-static void smmuv3_notify_stall_resume(SMMUState *bs, uint32_t sid,
-                                       uint32_t stag, uint32_t code)
-{
-    SMMUDevice *sdev = smmu_find_sdev(bs, sid);
-    PageRespEntry *msg;
-    SMMUS1Hwpt *hwpt;
-    //HostIOMMUDeviceIOMMUFD *idev;
-
-    if (!sdev) {
-        return;
-    }
-
-    hwpt = sdev->s1_hwpt;
-    //idev = sdev->idev;
-
-    msg = g_malloc0(sizeof(*msg));
-    //msg->resp.size = sizeof(struct iommu_hwpt_page_response);
-    //msg->resp.hwpt_id = hwpt->hwpt_id;
-    //msg->resp.dev_id = idev->dev_id;
-    //msg->resp.grpid = stag;
-    msg->resp.code = code;
-
-    qemu_mutex_lock(&hwpt->fault_mutex);
-    QTAILQ_INSERT_TAIL(&hwpt->pageresp, msg, entry);
-    qemu_mutex_unlock(&hwpt->fault_mutex);
 }
 
 static int smmuv3_cmdq_consume(SMMUv3State *s)

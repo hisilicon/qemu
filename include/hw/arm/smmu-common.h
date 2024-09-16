@@ -140,9 +140,14 @@ typedef struct SMMUViommu {
     QLIST_ENTRY(SMMUViommu) next;
 } SMMUViommu;
 
+typedef struct PendFaultEntry {
+    struct iommu_hwpt_pgfault fault;
+    QTAILQ_ENTRY(PendFaultEntry) entry;
+} PendFaultEntry;
+
 typedef struct PageRespEntry {
-    QTAILQ_ENTRY(PageRespEntry) entry;
     struct iommu_hwpt_page_response resp;
+    QTAILQ_ENTRY(PageRespEntry) entry;
 } PageRespEntry;
 
 typedef struct SMMUS1Hwpt {
@@ -154,9 +159,14 @@ typedef struct SMMUS1Hwpt {
     uint32_t out_fault_fd;
     QLIST_HEAD(, SMMUDevice) device_list;
     QLIST_ENTRY(SMMUViommu) next;
-    QemuThread thread;
+    /* fault handling */
+    struct io_uring fault_ring;
+    QemuThread read_fault_thread;
+    QemuThread write_fault_thread;
     QemuMutex fault_mutex;
+    QemuCond fault_cond;
     QTAILQ_HEAD(, PageRespEntry) pageresp;
+    QTAILQ_HEAD(, PendFaultEntry) pendfault;
     bool exiting;
 } SMMUS1Hwpt;
 
@@ -281,7 +291,8 @@ int smmu_dev_get_info(SMMUDevice *sdev, uint32_t *data_type,
                       uint32_t data_len, void *data);
 void smmu_dev_uninstall_nested_ste(SMMUDevice *sdev, bool abort);
 int smmu_dev_install_nested_ste(SMMUDevice *sdev, uint32_t data_type,
-                                uint32_t data_len, void *data, void *(*handler)(void *));
+                                uint32_t data_len, void *data,
+                                bool req_fault_fd);
 int smmu_dev_set_virtual_sid(SMMUDevice *sdev, uint32_t sid);
 int smmu_hwpt_invalidate_cache(SMMUS1Hwpt *s1_hwpt, uint32_t type, uint32_t len,
                                uint32_t *num, void *reqs);
