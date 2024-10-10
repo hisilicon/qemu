@@ -670,7 +670,7 @@ static bool smmu_dev_attach_viommu(SMMUDevice *sdev,
     if (!iommufd_backend_alloc_hwpt(idev->iommufd, idev->devid, idev->ioas_id,
                                     IOMMU_HWPT_ALLOC_NEST_PARENT,
                                     IOMMU_HWPT_DATA_NONE, 0, NULL,
-                                    &s2_hwpt_id, errp)) {
+                                    &s2_hwpt_id, NULL, errp)) {
         error_setg(errp, "failed to allocate an S2 hwpt");
         return false;
     }
@@ -695,7 +695,7 @@ static bool smmu_dev_attach_viommu(SMMUDevice *sdev,
                                     viommu->core->viommu_id, 0,
                                     IOMMU_HWPT_DATA_ARM_SMMUV3,
                                     sizeof(abort_data), &abort_data,
-                                    &viommu->abort_hwpt_id, errp)) {
+                                    &viommu->abort_hwpt_id, NULL, errp)) {
         error_setg(errp, "failed to allocate an abort pagetable");
         goto free_viommu_core;
     }
@@ -704,7 +704,7 @@ static bool smmu_dev_attach_viommu(SMMUDevice *sdev,
                                     viommu->core->viommu_id, 0,
                                     IOMMU_HWPT_DATA_ARM_SMMUV3,
                                     sizeof(bypass_data), &bypass_data,
-                                    &viommu->bypass_hwpt_id, errp)) {
+                                    &viommu->bypass_hwpt_id, NULL, errp)) {
         error_setg(errp, "failed to allocate a bypass pagetable");
         goto free_abort_hwpt;
     }
@@ -881,6 +881,25 @@ void smmu_dev_uninstall_nested_ste(SMMUDevice *sdev, bool abort)
         hwpt_id = sdev->viommu->bypass_hwpt_id;
     }
 
+     /* ToDo: May be better to move the below to smmuv3. */
+    if (s1_hwpt->out_fault_fd) {
+        struct io_uring *ring = &s1_hwpt->fault_ring;
+        struct io_uring_sqe *sqe;
+        struct __kernel_timespec ts = {.tv_sec = 0, .tv_nsec = 1};
+
+        s1_hwpt->exiting = true;
+        /* Send out a timeout sqe for the read handler to exit */
+        sqe  = io_uring_get_sqe(ring);
+        io_uring_prep_timeout(sqe, &ts, 0, 0);
+        io_uring_submit(ring);
+
+        qemu_cond_signal(&s1_hwpt->fault_cond);
+        qemu_thread_join(&s1_hwpt->read_fault_thread);
+        qemu_thread_join(&s1_hwpt->write_fault_thread);
+        qemu_mutex_destroy(&s1_hwpt->fault_mutex);
+        io_uring_queue_exit(&s1_hwpt->fault_ring);
+    }
+
     if (!host_iommu_device_iommufd_attach_hwpt(idev, hwpt_id, NULL)) {
         return;
     }
@@ -891,11 +910,13 @@ void smmu_dev_uninstall_nested_ste(SMMUDevice *sdev, bool abort)
 }
 
 int smmu_dev_install_nested_ste(SMMUDevice *sdev, uint32_t data_type,
-                                uint32_t data_len, void *data)
+                                uint32_t data_len, void *data,
+                                bool req_fault_fd)
 {
     SMMUViommu *viommu = sdev->viommu;
     SMMUS1Hwpt *s1_hwpt = sdev->s1_hwpt;
     HostIOMMUDeviceIOMMUFD *idev = sdev->idev;
+    uint32_t flags = 0;
 
     if (!idev || !viommu) {
         return -ENOENT;
@@ -911,12 +932,18 @@ int smmu_dev_install_nested_ste(SMMUDevice *sdev, uint32_t data_type,
     }
 
     s1_hwpt->smmu = sdev->smmu;
+    s1_hwpt->sdev = sdev;
     s1_hwpt->viommu = viommu;
     s1_hwpt->iommufd = idev->iommufd;
 
+    if (req_fault_fd) {
+        flags |= IOMMU_HWPT_FAULT_ID_VALID;
+    }
+
     if (!iommufd_backend_alloc_hwpt(idev->iommufd, idev->devid,
-                                    viommu->core->viommu_id, 0, data_type,
-                                    data_len, data, &s1_hwpt->hwpt_id, NULL)) {
+                                    viommu->core->viommu_id, flags, data_type,
+                                    data_len, data, &s1_hwpt->hwpt_id,
+                                    &s1_hwpt->out_fault_fd, NULL)) {
         goto free;
     }
 

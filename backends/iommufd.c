@@ -228,7 +228,7 @@ bool iommufd_backend_alloc_hwpt(IOMMUFDBackend *be, uint32_t dev_id,
                                 uint32_t pt_id, uint32_t flags,
                                 uint32_t data_type, uint32_t data_len,
                                 void *data_ptr, uint32_t *out_hwpt,
-                                Error **errp)
+                                uint32_t *out_fault_fd, Error **errp)
 {
     int ret, fd = be->fd;
     struct iommu_hwpt_alloc alloc_hwpt = {
@@ -240,6 +240,24 @@ bool iommufd_backend_alloc_hwpt(IOMMUFDBackend *be, uint32_t dev_id,
         .data_len = data_len,
         .data_uptr = (uintptr_t)data_ptr,
     };
+
+    if (flags & IOMMU_HWPT_FAULT_ID_VALID) {
+
+        struct iommu_fault_alloc cmd = {
+            .size = sizeof(cmd),
+        };
+
+        ret = ioctl(fd, IOMMU_FAULT_QUEUE_ALLOC, &cmd);
+        if (ret) {
+            ret = -errno;
+            error_report("IOMMU_FAULT_ALLOC failed: %m");
+        } else {
+            alloc_hwpt.fault_id = cmd.out_fault_id;
+            if (out_fault_fd) {
+                *out_fault_fd = cmd.out_fault_fd;
+            }
+        }
+    }
 
     ret = ioctl(fd, IOMMU_HWPT_ALLOC, &alloc_hwpt);
     trace_iommufd_backend_alloc_hwpt(fd, dev_id, pt_id, flags, data_type,
