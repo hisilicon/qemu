@@ -1,6 +1,6 @@
 #!/bin/sh -e
 #
-# Update target/arm/cpu-sysregs.h
+# Update target/arm/cpu-sysreg-properties.c and target/arm/cpu-sysregs.h
 # from a linux source tree (arch/arm64/tools/sysreg)
 #
 # Copyright Red Hat, Inc. 2024
@@ -23,3 +23,6 @@ fi
 
 awk -f gen-cpu-sysregs-header.awk \
     $linux/arch/arm64/tools/sysreg > ../target/arm/cpu-sysregs.h.inc
+
+awk -f gen-cpu-sysreg-properties.awk \
+       $linux/arch/arm64/tools/sysreg > ../target/arm/cpu-sysreg-properties.c
