@@ -312,8 +312,7 @@ out:
 
     val = FIELD_EX32(sdev->info.idr[1], IDR1, SIDSIZE);
     s->idr[1] = FIELD_DP32(s->idr[1], IDR1, SIDSIZE, val);
-    val = FIELD_EX32(sdev->info.idr[1], IDR1, SSIDSIZE);
-    s->idr[1] = FIELD_DP32(s->idr[1], IDR1, SSIDSIZE, val);
+    s->idr[1] = FIELD_DP32(s->idr[1], IDR1, SSIDSIZE, pasid);
 
     val = FIELD_EX32(sdev->info.idr[3], IDR3, HAD);
     s->idr[3] = FIELD_DP32(s->idr[3], IDR3, HAD, val);

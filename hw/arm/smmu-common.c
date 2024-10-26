@@ -830,10 +830,19 @@ static void smmu_dev_unset_iommu_device(PCIBus *bus, void *opaque, int devfn)
     }
 }
 
+static bool smmu_dev_get_pasid_cap(PCIBus *bus,
+                                   void *opaque, int devfn)
+{
+    assert(0 <= devfn && devfn < PCI_DEVFN_MAX);
+
+    return true;
+}
+
 static const PCIIOMMUOps smmu_ops = {
     .get_address_space = smmu_find_add_as,
     .set_iommu_device = smmu_dev_set_iommu_device,
     .unset_iommu_device = smmu_dev_unset_iommu_device,
+    .get_pasid_cap = smmu_dev_get_pasid_cap,
 };
 
 SMMUDevice *smmu_find_sdev(SMMUState *s, uint32_t sid)
