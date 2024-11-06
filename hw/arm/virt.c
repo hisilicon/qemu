@@ -166,6 +166,7 @@ static const MemMapEntry base_memmap[] = {
     /* In the virtCCA scenario, this space is used for MSI interrupt mapping */
     [VIRT_CVM_MSI] =            { 0x0a001000, 0x00fff000 },
     [VIRT_CPUFREQ] =            { 0x0b000000, 0x00010000 },
+    [VIRT_SMMU_NESTED] =        { 0x0b010000, 0x00ff0000},
     /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
     [VIRT_PLATFORM_BUS] =       { 0x0c000000, 0x02000000 },
     [VIRT_SECURE_MEM] =         { 0x0e000000, 0x01000000 },
@@ -211,6 +212,7 @@ static const int a15irqmap[] = {
     [VIRT_GIC_V2M] = 48, /* ...to 48 + NUM_GICV2M_SPIS - 1 */
     [VIRT_SMMU] = 74,    /* ...to 74 + NUM_SMMU_IRQS - 1 */
     [VIRT_PLATFORM_BUS] = 112, /* ...to 112 + PLATFORM_BUS_NUM_IRQS -1 */
+    [VIRT_SMMU_NESTED] = 200,
 };
 
 static const char *valid_cpus[] = {
@@ -3613,10 +3615,34 @@ static void virt_machine_device_plug_cb(HotplugHandler *hotplug_dev,
                                         DeviceState *dev, Error **errp)
 {
     VirtMachineState *vms = VIRT_MACHINE(hotplug_dev);
+    MachineClass *mc = MACHINE_GET_CLASS(vms);
+
+    /* For smmuv3-nested devices we need to set the mem & irq */
+    if (device_is_dynamic_sysbus(mc, dev) &&
+        object_dynamic_cast(OBJECT(dev), TYPE_ARM_SMMUV3_NESTED)) {
+        hwaddr base = vms->memmap[VIRT_SMMU_NESTED].base;
+        int irq =  vms->irqmap[VIRT_SMMU_NESTED];
+
+        if (vms->smmu_nested_count >= MAX_SMMU_NESTED) {
+            error_setg(errp, "smmuv3-nested max count reached!");
+            return;
+        }
+
+        base += (vms->smmu_nested_count * SMMU_IO_LEN);
+        irq += (vms->smmu_nested_count * NUM_SMMU_IRQS);
+
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
+        for (int i = 0; i < 4; i++) {
+            sysbus_connect_irq(SYS_BUS_DEVICE(dev), i,
+                               qdev_get_gpio_in(vms->gic, irq + i));
+        }
+        if (vms->iommu != VIRT_IOMMU_SMMUV3_NESTED) {
+            vms->iommu = VIRT_IOMMU_SMMUV3_NESTED;
+        }
+        vms->smmu_nested_count++;
+    }
 
     if (vms->platform_bus_dev) {
-        MachineClass *mc = MACHINE_GET_CLASS(vms);
-
         if (device_is_dynamic_sysbus(mc, dev)) {
             platform_bus_link_device(PLATFORM_BUS_DEVICE(vms->platform_bus_dev),
                                      SYS_BUS_DEVICE(dev));
@@ -3789,6 +3815,7 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_VFIO_AMD_XGBE);
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_RAMFB_DEVICE);
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_VFIO_PLATFORM);
+    machine_class_allow_dynamic_sysbus_dev(mc, TYPE_ARM_SMMUV3_NESTED);
 #ifdef CONFIG_TPM
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_TPM_TIS_SYSBUS);
 #endif

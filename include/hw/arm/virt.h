@@ -109,6 +109,9 @@ typedef enum {
 /* MMIO region size for SMMUv3 */
 #define SMMU_IO_LEN 0x20000
 
+/* Max supported nested SMMUv3 */
+#define MAX_SMMU_NESTED 64
+
 enum {
     VIRT_FLASH,
     VIRT_MEM,
@@ -121,6 +124,7 @@ enum {
     VIRT_GIC_ITS,
     VIRT_GIC_REDIST,
     VIRT_SMMU,
+    VIRT_SMMU_NESTED,
     VIRT_UART,
     VIRT_CPUFREQ,
     VIRT_MMIO,
@@ -155,6 +159,7 @@ enum {
 typedef enum VirtIOMMUType {
     VIRT_IOMMU_NONE,
     VIRT_IOMMU_SMMUV3,
+    VIRT_IOMMU_SMMUV3_NESTED,
     VIRT_IOMMU_VIRTIO,
 } VirtIOMMUType;
 
@@ -222,6 +227,7 @@ struct VirtMachineState {
     bool mte;
     bool dtb_randomness;
     bool pmu;
+    int smmu_nested_count;
     OnOffAuto acpi;
     VirtGICType gic_version;
     VirtIOMMUType iommu;

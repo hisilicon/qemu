@@ -2069,6 +2069,19 @@ static void smmu_realize(DeviceState *d, Error **errp)
     smmu_init_irq(s, dev);
 }
 
+static void smmu_nested_realize(DeviceState *d, Error **errp)
+{
+    SMMUv3NestedState *s_nested = ARM_SMMUV3_NESTED(d);
+    SMMUv3NestedClass *c = ARM_SMMUV3_NESTED_GET_CLASS(s_nested);
+    Error *local_err = NULL;
+
+    c->parent_realize(d, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return;
+    }
+}
+
 static const VMStateDescription vmstate_smmuv3_queue = {
     .name = "smmuv3_queue",
     .version_id = 1,
@@ -2167,6 +2180,18 @@ static void smmuv3_class_init(ObjectClass *klass, void *data)
     device_class_set_props(dc, smmuv3_properties);
 }
 
+static void smmuv3_nested_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SMMUv3NestedClass *c = ARM_SMMUV3_NESTED_CLASS(klass);
+
+    dc->vmsd = &vmstate_smmuv3;
+    device_class_set_parent_realize(dc, smmu_nested_realize,
+                                    &c->parent_realize);
+    dc->user_creatable = true;
+    dc->hotpluggable = false;
+}
+
 static int smmuv3_notify_flag_changed(IOMMUMemoryRegion *iommu,
                                       IOMMUNotifierFlag old,
                                       IOMMUNotifierFlag new,
@@ -2205,6 +2230,14 @@ static void smmuv3_iommu_memory_region_class_init(ObjectClass *klass,
     imrc->notify_flag_changed = smmuv3_notify_flag_changed;
 }
 
+static const TypeInfo smmuv3_nested_type_info = {
+    .name          = TYPE_ARM_SMMUV3_NESTED,
+    .parent        = TYPE_ARM_SMMUV3,
+    .instance_size = sizeof(SMMUv3NestedState),
+    .class_size    = sizeof(SMMUv3NestedClass),
+    .class_init    = smmuv3_nested_class_init,
+};
+
 static const TypeInfo smmuv3_type_info = {
     .name          = TYPE_ARM_SMMUV3,
     .parent        = TYPE_ARM_SMMU,
@@ -2223,6 +2256,7 @@ static const TypeInfo smmuv3_iommu_memory_region_info = {
 static void smmuv3_register_types(void)
 {
     type_register(&smmuv3_type_info);
+    type_register(&smmuv3_nested_type_info);
     type_register(&smmuv3_iommu_memory_region_info);
 }
 
