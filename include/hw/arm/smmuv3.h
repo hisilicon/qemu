@@ -89,6 +89,8 @@ OBJECT_DECLARE_TYPE(SMMUv3NestedState, SMMUv3NestedClass, ARM_SMMUV3_NESTED)
 
 struct SMMUv3NestedState {
     SMMUv3State smmuv3_state;
+
+    char *pci_bus;
 };
 
 struct SMMUv3NestedClass {

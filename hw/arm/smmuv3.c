@@ -24,6 +24,7 @@
 #include "hw/qdev-properties.h"
 #include "hw/qdev-core.h"
 #include "hw/pci/pci.h"
+#include "hw/pci/pci_bridge.h"
 #include "cpu.h"
 #include "trace.h"
 #include "qemu/log.h"
@@ -2069,11 +2070,31 @@ static void smmu_realize(DeviceState *d, Error **errp)
     smmu_init_irq(s, dev);
 }
 
+static int smmuv3_nested_pci_host_bridge(Object *obj, void *opaque)
+{
+    DeviceState *d = opaque;
+    SMMUv3NestedState *s_nested = ARM_SMMUV3_NESTED(d);
+
+    if (object_dynamic_cast(obj, TYPE_PCI_HOST_BRIDGE)) {
+        PCIBus *bus = PCI_HOST_BRIDGE(obj)->bus;
+        if (s_nested->pci_bus && !strcmp(bus->qbus.name, s_nested->pci_bus)) {
+            object_property_set_link(OBJECT(d), "primary-bus", OBJECT(bus),
+                                     &error_abort);
+        }
+    }
+    return 0;
+}
+
 static void smmu_nested_realize(DeviceState *d, Error **errp)
 {
     SMMUv3NestedState *s_nested = ARM_SMMUV3_NESTED(d);
     SMMUv3NestedClass *c = ARM_SMMUV3_NESTED_GET_CLASS(s_nested);
+    SysBusDevice *dev = SYS_BUS_DEVICE(d);
     Error *local_err = NULL;
+
+    object_child_foreach_recursive(object_get_root(),
+                                   smmuv3_nested_pci_host_bridge, d);
+    object_property_set_bool(OBJECT(dev), "nested", true, &error_abort);
 
     c->parent_realize(d, &local_err);
     if (local_err) {
@@ -2161,6 +2182,11 @@ static Property smmuv3_properties[] = {
     DEFINE_PROP_END_OF_LIST()
 };
 
+static Property smmuv3_nested_properties[] = {
+    DEFINE_PROP_STRING("pci-bus", SMMUv3NestedState, pci_bus),
+    DEFINE_PROP_END_OF_LIST()
+};
+
 static void smmuv3_instance_init(Object *obj)
 {
     /* Nothing much to do here as of now */
@@ -2188,6 +2214,7 @@ static void smmuv3_nested_class_init(ObjectClass *klass, void *data)
     dc->vmsd = &vmstate_smmuv3;
     device_class_set_parent_realize(dc, smmu_nested_realize,
                                     &c->parent_realize);
+    device_class_set_props(dc, smmuv3_nested_properties);
     dc->user_creatable = true;
     dc->hotpluggable = false;
 }
