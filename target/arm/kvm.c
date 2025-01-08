@@ -43,6 +43,53 @@
 #include "migration/blocker.h"
 #include "cpu-custom.h"
 
+/*
+ * SMMCC KVM Vendor hypercall definitions.
+ * ToDo: Include using update-linux-headers.sh
+ */
+#define ARM_SMCCC_FAST_CALL             _AC(1,U)
+#define ARM_SMCCC_TYPE_SHIFT            31
+
+#define ARM_SMCCC_SMC_32                0
+#define ARM_SMCCC_SMC_64                1
+#define ARM_SMCCC_CALL_CONV_SHIFT       30
+
+#define ARM_SMCCC_OWNER_MASK            0x3F
+#define ARM_SMCCC_OWNER_SHIFT           24
+
+#define ARM_SMCCC_FUNC_MASK             0xFFFF
+
+#define ARM_SMCCC_OWNER_VENDOR_HYP      6
+
+
+#define ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_VER    64
+#define ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_CPUS   65
+
+#define ARM_SMCCC_KVM_DISCOVER_IMPL_VER_1_0     0x10000
+
+#define ARM_SMCCC_CALL_VAL(type, calling_convention, owner, func_num) \
+        (((type) << ARM_SMCCC_TYPE_SHIFT) | \
+        ((calling_convention) << ARM_SMCCC_CALL_CONV_SHIFT) | \
+        (((owner) & ARM_SMCCC_OWNER_MASK) << ARM_SMCCC_OWNER_SHIFT) | \
+        ((func_num) & ARM_SMCCC_FUNC_MASK))
+
+#define ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_VER_FUNC_ID              \
+        ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,                         \
+                           ARM_SMCCC_SMC_64,                            \
+                           ARM_SMCCC_OWNER_VENDOR_HYP,                  \
+                           ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_VER)
+
+#define ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_CPUS_FUNC_ID             \
+        ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,                         \
+                           ARM_SMCCC_SMC_64,                            \
+                           ARM_SMCCC_OWNER_VENDOR_HYP,                  \
+                           ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_CPUS)
+
+#define SMCCC_RET_SUCCESS                       0
+#define SMCCC_RET_NOT_SUPPORTED                 -1
+#define SMCCC_RET_NOT_REQUIRED                  -2
+#define SMCCC_RET_INVALID_PARAMETER             -3
+
 const KVMCapabilityInfo kvm_arch_required_capabilities[] = {
     KVM_CAP_INFO(DEVICE_CTRL),
     KVM_CAP_LAST_INFO
