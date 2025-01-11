@@ -360,7 +360,7 @@ bool vfio_get_info_dma_avail(struct vfio_iommu_type1_info *info,
 }
 
 static bool vfio_get_info_iova_range(struct vfio_iommu_type1_info *info,
-                                     VFIOContainer *container)
+                                     VFIOContainerBase *bcontainer)
 {
     struct vfio_info_cap_header *hdr;
     struct vfio_iommu_type1_info_cap_iova_range *cap;
@@ -378,8 +378,8 @@ static bool vfio_get_info_iova_range(struct vfio_iommu_type1_info *info,
 
         range_set_bounds(range, cap->iova_ranges[i].start,
                          cap->iova_ranges[i].end);
-        container->iova_ranges =
-            range_list_insert(container->iova_ranges, range);
+        bcontainer->iova_ranges =
+            range_list_insert(bcontainer->iova_ranges, range);
     }
 
     return true;
@@ -542,12 +542,6 @@ static void vfio_get_iommu_info_migration(VFIOContainer *container,
     }
 }
 
-static void vfio_free_container(VFIOContainer *container)
-{
-    g_list_free_full(container->iova_ranges, g_free);
-    g_free(container);
-}
-
 static SharedRegionListener *g_shl;
 
 static void shared_memory_listener_register(MemoryListener *listener,
@@ -653,7 +647,6 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
 
     container = g_malloc0(sizeof(*container));
     container->fd = fd;
-    container->iova_ranges = NULL;
     QLIST_INIT(&container->dma_list);
     bcontainer = &container->bcontainer;
     vfio_container_init(bcontainer, space, &vfio_legacy_ops);
@@ -692,7 +685,7 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
             bcontainer->dma_max_mappings = 65535;
         }
 
-        vfio_get_info_iova_range(info, container);
+        vfio_get_info_iova_range(info, bcontainer);
 
         vfio_get_iommu_info_migration(container, info);
         g_free(info);
@@ -753,7 +746,7 @@ enable_discards_exit:
     vfio_ram_block_discard_disable(container, false);
 
 free_container_exit:
-    vfio_free_container(container);
+    g_free(container);
 
 close_fd_exit:
     close(fd);
@@ -801,7 +794,7 @@ static void vfio_disconnect_container(VFIOGroup *group)
 
         trace_vfio_disconnect_container(container->fd);
         close(container->fd);
-        vfio_free_container(container);
+        g_free(container);
 
         vfio_put_address_space(space);
     }

@@ -92,7 +92,6 @@ typedef struct VFIOContainer {
     QLIST_HEAD(, VFIOHostDMAWindow) hostwin_list;
     QLIST_HEAD(, VFIOGroup) group_list;
     QLIST_HEAD(, VFIODMARange) dma_list;
-    GList *iova_ranges;
 } VFIOContainer;
 
 typedef struct VFIOHostDMAWindow {
