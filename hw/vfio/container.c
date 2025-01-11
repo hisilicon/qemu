@@ -520,6 +520,7 @@ static void vfio_get_iommu_info_migration(VFIOContainer *container,
 {
     struct vfio_info_cap_header *hdr;
     struct vfio_iommu_type1_info_cap_migration *cap_mig;
+    VFIOContainerBase *bcontainer = &container->bcontainer;
 
     hdr = vfio_get_iommu_info_cap(info, VFIO_IOMMU_TYPE1_INFO_CAP_MIGRATION);
     if (!hdr) {
@@ -534,7 +535,7 @@ static void vfio_get_iommu_info_migration(VFIOContainer *container,
      * qemu_real_host_page_size to mark those dirty.
      */
     if (cap_mig->pgsize_bitmap & qemu_real_host_page_size()) {
-        container->bcontainer.dirty_pages_supported = true;
+        bcontainer->dirty_pages_supported = true;
         container->max_dirty_bitmap_size = cap_mig->max_dirty_bitmap_size;
         container->dirty_pgsizes = cap_mig->pgsize_bitmap;
     }
@@ -651,7 +652,6 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
 
     container = g_malloc0(sizeof(*container));
     container->fd = fd;
-    container->error = NULL;
     container->iova_ranges = NULL;
     QLIST_INIT(&container->dma_list);
     bcontainer = &container->bcontainer;
@@ -716,23 +716,22 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     group->container = container;
     QLIST_INSERT_HEAD(&container->group_list, group, container_next);
 
-    container->listener = vfio_memory_listener;
-
     if (kvm_csv3_enabled()) {
-        shared_memory_listener_register(&container->listener,
+        shared_memory_listener_register(&bcontainer->listener,
                                         bcontainer->space->as);
-    } else {
-        memory_listener_register(&container->listener, bcontainer->space->as);
     }
 
-    if (container->error) {
+    bcontainer->listener = vfio_memory_listener;
+    memory_listener_register(&bcontainer->listener, bcontainer->space->as);
+
+    if (bcontainer->error) {
         ret = -1;
-        error_propagate_prepend(errp, container->error,
+        error_propagate_prepend(errp, bcontainer->error,
             "memory listener initialization failed: ");
         goto listener_release_exit;
     }
 
-    container->initialized = true;
+    bcontainer->initialized = true;
 
     return 0;
 listener_release_exit:
@@ -742,7 +741,7 @@ listener_release_exit:
     if (kvm_csv3_enabled()) {
         shared_memory_listener_unregister();
     } else {
-        memory_listener_unregister(&container->listener);
+        memory_listener_unregister(&bcontainer->listener);
     }
     if (container->iommu_type == VFIO_SPAPR_TCE_v2_IOMMU ||
         container->iommu_type == VFIO_SPAPR_TCE_IOMMU) {
@@ -781,7 +780,7 @@ static void vfio_disconnect_container(VFIOGroup *group)
         if (kvm_csv3_enabled()) {
             shared_memory_listener_unregister();
         } else {
-            memory_listener_unregister(&container->listener);
+            memory_listener_unregister(&bcontainer->listener);
         }
         if (container->iommu_type == VFIO_SPAPR_TCE_v2_IOMMU ||
             container->iommu_type == VFIO_SPAPR_TCE_IOMMU) {
