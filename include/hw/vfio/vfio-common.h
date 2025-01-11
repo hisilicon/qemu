@@ -94,8 +94,6 @@ typedef struct VFIOContainer {
     bool dirty_log_manual_clear;
     uint64_t dirty_pgsizes;
     uint64_t max_dirty_bitmap_size;
-    unsigned long pgsizes;
-    unsigned int dma_max_mappings;
     QLIST_HEAD(, VFIOHostDMAWindow) hostwin_list;
     QLIST_HEAD(, VFIOGroup) group_list;
     QLIST_HEAD(, VFIORamDiscardListener) vrdl_list;
