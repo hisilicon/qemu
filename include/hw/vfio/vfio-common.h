@@ -183,11 +183,6 @@ VFIODMARange *vfio_lookup_match_range(VFIOContainer *container,
 void vfio_dma_range_init_dirty_bitmap(VFIODMARange *qrange);
 
 /* SPAPR specific */
-int vfio_container_add_section_window(VFIOContainer *container,
-                                      MemoryRegionSection *section,
-                                      Error **errp);
-void vfio_container_del_section_window(VFIOContainer *container,
-                                       MemoryRegionSection *section);
 int vfio_spapr_container_init(VFIOContainer *container, Error **errp);
 void vfio_spapr_container_deinit(VFIOContainer *container);
 
