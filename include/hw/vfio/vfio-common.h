@@ -30,6 +30,7 @@
 #include <linux/vfio.h>
 #endif
 #include "sysemu/sysemu.h"
+#include "hw/vfio/vfio-container-base.h"
 
 #define VFIO_MSG_PREFIX "vfio %s: "
 
@@ -89,6 +90,7 @@ typedef struct VFIODMARange {
 } VFIODMARange;
 
 typedef struct VFIOContainer {
+    VFIOContainerBase bcontainer;
     VFIOAddressSpace *space;
     int fd; /* /dev/vfio/vfio, empowered by the attached groups */
     MemoryListener listener;
@@ -210,12 +212,6 @@ typedef struct VFIODisplay {
         VFIODMABuf *cursor;
     } dmabuf;
 } VFIODisplay;
-
-typedef struct {
-    unsigned long *bitmap;
-    hwaddr size;
-    hwaddr pages;
-} VFIOBitmap;
 
 VFIOAddressSpace *vfio_get_address_space(AddressSpace *as);
 void vfio_put_address_space(VFIOAddressSpace *space);
