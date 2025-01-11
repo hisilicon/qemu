@@ -86,7 +86,6 @@ typedef struct VFIODMARange {
 typedef struct VFIOContainer {
     VFIOContainerBase bcontainer;
     int fd; /* /dev/vfio/vfio, empowered by the attached groups */
-    MemoryListener prereg_listener;
     unsigned iommu_type;
     bool dirty_log_manual_clear;
     QLIST_HEAD(, VFIOHostDMAWindow) hostwin_list;
