@@ -91,7 +91,6 @@ typedef struct VFIOContainer {
     unsigned iommu_type;
     Error *error;
     bool initialized;
-    bool dirty_pages_supported;
     bool dirty_log_manual_clear;
     uint64_t dirty_pgsizes;
     uint64_t max_dirty_bitmap_size;
@@ -200,13 +199,9 @@ VFIOAddressSpace *vfio_get_address_space(AddressSpace *as);
 void vfio_put_address_space(VFIOAddressSpace *space);
 bool vfio_devices_all_running_and_saving(VFIOContainer *container);
 
-/* container->fd */
 VFIODMARange *vfio_lookup_match_range(VFIOContainer *container,
 		hwaddr start_addr, hwaddr size);
 void vfio_dma_range_init_dirty_bitmap(VFIODMARange *qrange);
-int vfio_set_dirty_page_tracking(VFIOContainer *container, bool start);
-int vfio_query_dirty_bitmap(VFIOContainer *container, VFIOBitmap *vbmap,
-                            hwaddr iova, hwaddr size);
 
 /* SPAPR specific */
 int vfio_container_add_section_window(VFIOContainer *container,
