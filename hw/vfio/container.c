@@ -565,6 +565,7 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
                                   Error **errp)
 {
     VFIOContainer *container;
+    VFIOContainerBase *bcontainer;
     int ret, fd;
     VFIOAddressSpace *space;
 
@@ -646,6 +647,8 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     QLIST_INIT(&container->giommu_list);
     QLIST_INIT(&container->vrdl_list);
     QLIST_INIT(&container->dma_list);
+    bcontainer = &container->bcontainer;
+    bcontainer->ops = &vfio_legacy_ops;
 
     ret = vfio_init_container(container, group->fd, errp);
     if (ret) {
@@ -1046,3 +1049,5 @@ void vfio_detach_device(VFIODevice *vbasedev)
     vfio_put_base_device(vbasedev);
     vfio_put_group(group);
 }
+
+const VFIOIOMMUOps vfio_legacy_ops;
