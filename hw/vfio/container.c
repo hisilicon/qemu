@@ -653,7 +653,6 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     container->fd = fd;
     container->error = NULL;
     container->iova_ranges = NULL;
-    QLIST_INIT(&container->vrdl_list);
     QLIST_INIT(&container->dma_list);
     bcontainer = &container->bcontainer;
     vfio_container_init(bcontainer, space, &vfio_legacy_ops);

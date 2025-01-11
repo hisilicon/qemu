@@ -96,20 +96,9 @@ typedef struct VFIOContainer {
     uint64_t max_dirty_bitmap_size;
     QLIST_HEAD(, VFIOHostDMAWindow) hostwin_list;
     QLIST_HEAD(, VFIOGroup) group_list;
-    QLIST_HEAD(, VFIORamDiscardListener) vrdl_list;
     QLIST_HEAD(, VFIODMARange) dma_list;
     GList *iova_ranges;
 } VFIOContainer;
-
-typedef struct VFIORamDiscardListener {
-    VFIOContainer *container;
-    MemoryRegion *mr;
-    hwaddr offset_within_address_space;
-    hwaddr size;
-    uint64_t granularity;
-    RamDiscardListener listener;
-    QLIST_ENTRY(VFIORamDiscardListener) next;
-} VFIORamDiscardListener;
 
 typedef struct VFIOHostDMAWindow {
     hwaddr min_iova;
