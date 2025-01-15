@@ -639,9 +639,16 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
     SMMUState *s = opaque;
     SMMUPciBus *sbus = smmu_get_sbus(s, bus);
     SMMUDevice *sdev = smmu_get_sdev(s, sbus, bus, devfn);
+    bool is_vfio = false;
+    PCIDevice *pdev;
+
+    pdev = pci_find_device(bus, pci_bus_num(bus), devfn);
+    if (object_dynamic_cast(OBJECT(pdev), "vfio-pci")) {
+        is_vfio = true;
+    }
 
     /* Return the system as if the device uses stage-2 only */
-    if (s->nested && !sdev->s1_hwpt) {
+    if (s->nested && !sdev->s1_hwpt && is_vfio) {
         return &sdev->as_sysmem;
     } else {
         return &sdev->as;
