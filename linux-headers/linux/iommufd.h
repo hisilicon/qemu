@@ -51,8 +51,8 @@ enum {
 	IOMMUFD_CMD_HWPT_GET_DIRTY_BITMAP = 0x8c,
 	IOMMUFD_CMD_HWPT_INVALIDATE = 0x8d,
 	IOMMUFD_CMD_FAULT_QUEUE_ALLOC = 0x8e,
-	IOMMUFD_CMD_VIOMMU_ALLOC = 0x8f,
-	IOMMUFD_CMD_VDEVICE_ALLOC = 0x90,
+	IOMMUFD_CMD_VIOMMU_ALLOC = 0x90,
+	IOMMUFD_CMD_VDEVICE_ALLOC = 0x91,
 };
 
 /**
@@ -397,18 +397,20 @@ struct iommu_hwpt_vtd_s1 {
 };
 
 /**
- * struct iommu_hwpt_arm_smmuv3 - ARM SMMUv3 Context Descriptor Table info
+ * struct iommu_hwpt_arm_smmuv3 - ARM SMMUv3 nested STE
  *                                (IOMMU_HWPT_DATA_ARM_SMMUV3)
  *
  * @ste: The first two double words of the user space Stream Table Entry for
- *       a user stage-1 Context Descriptor Table. Must be little-endian.
+ *       the translation. Must be little-endian.
  *       Allowed fields: (Refer to "5.2 Stream Table Entry" in SMMUv3 HW Spec)
  *       - word-0: V, Cfg, S1Fmt, S1ContextPtr, S1CDMax
  *       - word-1: EATS, S1DSS, S1CIR, S1COR, S1CSH, S1STALLD
  *
  * -EIO will be returned if @ste is not legal or contains any non-allowed field.
  * Cfg can be used to select a S1, Bypass or Abort configuration. A Bypass
- * nested domain will translate the same as the nesting parent.
+ * nested domain will translate the same as the nesting parent. The S1 will
+ * install a Context Descriptor Table pointing at userspace memory translated
+ * by the nesting parent.
  */
 struct iommu_hwpt_arm_smmuv3 {
 	__aligned_le64 ste[2];
@@ -920,8 +922,8 @@ enum iommu_viommu_type {
  * that is unique to a specific VM. Operations global to the IOMMU are connected
  * to the vIOMMU, such as:
  * - Security namespace for guest owned ID, e.g. guest-controlled cache tags
+ * - Non-device-affiliated event reporting, e.g. invalidation queue errors
  * - Access to a sharable nesting parent pagetable across physical IOMMUs
- * - Non-affiliated event reporting (e.g. an invalidation queue error)
  * - Virtualization of various platforms IDs, e.g. RIDs and others
  * - Delivery of paravirtualized invalidation
  * - Direct assigned invalidation queues
@@ -941,12 +943,10 @@ struct iommu_viommu_alloc {
  * struct iommu_vdevice_alloc - ioctl(IOMMU_VDEVICE_ALLOC)
  * @size: sizeof(struct iommu_vdevice_alloc)
  * @viommu_id: vIOMMU ID to associate with the virtual device
- * @dev_id: The pyhsical device to allocate a virtual instance on the vIOMMU
- * @__reserved: Must be 0
+ * @dev_id: The physical device to allocate a virtual instance on the vIOMMU
+ * @out_vdevice_id: Object handle for the vDevice. Pass to IOMMU_DESTORY
  * @virt_id: Virtual device ID per vIOMMU, e.g. vSID of ARM SMMUv3, vDeviceID
- *           of AMD IOMMU, and vID of a nested Intel VT-d to a Context Table.
- * @out_vdevice_id: Output virtual instance ID for the allocated object
- * @__reserved2: Must be 0
+ *           of AMD IOMMU, and vRID of a nested Intel VT-d to a Context Table
  *
  * Allocate a virtual device instance (for a physical device) against a vIOMMU.
  * This instance holds the device's information (related to its vIOMMU) in a VM.
@@ -955,10 +955,8 @@ struct iommu_vdevice_alloc {
 	__u32 size;
 	__u32 viommu_id;
 	__u32 dev_id;
-	__u32 __reserved;
-	__aligned_u64 virt_id;
 	__u32 out_vdevice_id;
-	__u32 __reserved2;
+	__aligned_u64 virt_id;
 };
 #define IOMMU_VDEVICE_ALLOC _IO(IOMMUFD_TYPE, IOMMUFD_CMD_VDEVICE_ALLOC)
 #endif
