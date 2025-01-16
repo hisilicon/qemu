@@ -110,7 +110,7 @@ typedef enum {
 #define SMMU_IO_LEN 0x20000
 
 /* Max supported nested SMMUv3 */
-#define MAX_SMMU_NESTED 64
+#define MAX_SMMU_ACCEL 64
 
 enum {
     VIRT_FLASH,
@@ -124,7 +124,7 @@ enum {
     VIRT_GIC_ITS,
     VIRT_GIC_REDIST,
     VIRT_SMMU,
-    VIRT_SMMU_NESTED,
+    VIRT_SMMU_ACCEL,
     VIRT_UART,
     VIRT_CPUFREQ,
     VIRT_MMIO,
@@ -159,7 +159,7 @@ enum {
 typedef enum VirtIOMMUType {
     VIRT_IOMMU_NONE,
     VIRT_IOMMU_SMMUV3,
-    VIRT_IOMMU_SMMUV3_NESTED,
+    VIRT_IOMMU_SMMUV3_ACCEL,
     VIRT_IOMMU_VIRTIO,
 } VirtIOMMUType;
 
@@ -227,7 +227,7 @@ struct VirtMachineState {
     bool mte;
     bool dtb_randomness;
     bool pmu;
-    int smmu_nested_count;
+    int smmu_accel_count;
     OnOffAuto acpi;
     VirtGICType gic_version;
     VirtIOMMUType iommu;
@@ -298,7 +298,7 @@ static inline int virt_gicv3_redist_region_count(VirtMachineState *vms)
 static inline bool virt_has_smmuv3(const VirtMachineState *vms)
 {
     return vms->iommu == VIRT_IOMMU_SMMUV3 ||
-           vms->iommu == VIRT_IOMMU_SMMUV3_NESTED;
+           vms->iommu == VIRT_IOMMU_SMMUV3_ACCEL;
 }
 
 #endif /* QEMU_ARM_VIRT_H */

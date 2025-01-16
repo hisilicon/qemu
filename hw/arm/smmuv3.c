@@ -2253,14 +2253,14 @@ static void smmu_realize(DeviceState *d, Error **errp)
     smmu_init_irq(s, dev);
 }
 
-static int smmuv3_nested_pci_host_bridge(Object *obj, void *opaque)
+static int smmuv3_accel_pci_host_bridge(Object *obj, void *opaque)
 {
     DeviceState *d = opaque;
-    SMMUv3NestedState *s_nested = ARM_SMMUV3_NESTED(d);
+    SMMUv3AccelState *s_accel = ARM_SMMUV3_ACCEL(d);
 
     if (object_dynamic_cast(obj, TYPE_PCI_HOST_BRIDGE)) {
         PCIBus *bus = PCI_HOST_BRIDGE(obj)->bus;
-        if (s_nested->pci_bus && !strcmp(bus->qbus.name, s_nested->pci_bus)) {
+        if (s_accel->pci_bus && !strcmp(bus->qbus.name, s_accel->pci_bus)) {
             object_property_set_link(OBJECT(d), "primary-bus", OBJECT(bus),
                                      &error_abort);
         }
@@ -2268,15 +2268,15 @@ static int smmuv3_nested_pci_host_bridge(Object *obj, void *opaque)
     return 0;
 }
 
-static void smmu_nested_realize(DeviceState *d, Error **errp)
+static void smmu_accel_realize(DeviceState *d, Error **errp)
 {
-    SMMUv3NestedState *s_nested = ARM_SMMUV3_NESTED(d);
-    SMMUv3NestedClass *c = ARM_SMMUV3_NESTED_GET_CLASS(s_nested);
+    SMMUv3AccelState *s_nested = ARM_SMMUV3_ACCEL(d);
+    SMMUv3AccelClass *c = ARM_SMMUV3_ACCEL_GET_CLASS(s_nested);
     SysBusDevice *dev = SYS_BUS_DEVICE(d);
     Error *local_err = NULL;
 
     object_child_foreach_recursive(object_get_root(),
-                                   smmuv3_nested_pci_host_bridge, d);
+                                   smmuv3_accel_pci_host_bridge, d);
     object_property_set_bool(OBJECT(dev), "nested", true, &error_abort);
 
     c->parent_realize(d, &local_err);
@@ -2365,8 +2365,8 @@ static Property smmuv3_properties[] = {
     DEFINE_PROP_END_OF_LIST()
 };
 
-static Property smmuv3_nested_properties[] = {
-    DEFINE_PROP_STRING("pci-bus", SMMUv3NestedState, pci_bus),
+static Property smmuv3_accel_properties[] = {
+    DEFINE_PROP_STRING("pci-bus", SMMUv3AccelState, pci_bus),
     DEFINE_PROP_END_OF_LIST()
 };
 
@@ -2389,15 +2389,15 @@ static void smmuv3_class_init(ObjectClass *klass, void *data)
     device_class_set_props(dc, smmuv3_properties);
 }
 
-static void smmuv3_nested_class_init(ObjectClass *klass, void *data)
+static void smmuv3_accel_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    SMMUv3NestedClass *c = ARM_SMMUV3_NESTED_CLASS(klass);
+    SMMUv3AccelClass *c = ARM_SMMUV3_ACCEL_CLASS(klass);
 
     dc->vmsd = &vmstate_smmuv3;
-    device_class_set_parent_realize(dc, smmu_nested_realize,
+    device_class_set_parent_realize(dc, smmu_accel_realize,
                                     &c->parent_realize);
-    device_class_set_props(dc, smmuv3_nested_properties);
+    device_class_set_props(dc, smmuv3_accel_properties);
     dc->user_creatable = true;
     dc->hotpluggable = false;
 }
@@ -2440,12 +2440,12 @@ static void smmuv3_iommu_memory_region_class_init(ObjectClass *klass,
     imrc->notify_flag_changed = smmuv3_notify_flag_changed;
 }
 
-static const TypeInfo smmuv3_nested_type_info = {
-    .name          = TYPE_ARM_SMMUV3_NESTED,
+static const TypeInfo smmuv3_accel_type_info = {
+    .name          = TYPE_ARM_SMMUV3_ACCEL,
     .parent        = TYPE_ARM_SMMUV3,
-    .instance_size = sizeof(SMMUv3NestedState),
-    .class_size    = sizeof(SMMUv3NestedClass),
-    .class_init    = smmuv3_nested_class_init,
+    .instance_size = sizeof(SMMUv3AccelState),
+    .class_size    = sizeof(SMMUv3AccelClass),
+    .class_init    = smmuv3_accel_class_init,
 };
 
 static const TypeInfo smmuv3_type_info = {
@@ -2466,7 +2466,7 @@ static const TypeInfo smmuv3_iommu_memory_region_info = {
 static void smmuv3_register_types(void)
 {
     type_register(&smmuv3_type_info);
-    type_register(&smmuv3_nested_type_info);
+    type_register(&smmuv3_accel_type_info);
     type_register(&smmuv3_iommu_memory_region_info);
 }
 

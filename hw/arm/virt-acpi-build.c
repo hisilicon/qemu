@@ -418,10 +418,10 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap,
     };
 
     /*
-     * Nested SMMU requires RMRs for MSI 1-1 mapping, which
+     * Accel SMMU requires RMRs for MSI 1-1 mapping, which
      * require _DSM for PreservingPCI Boot Configurations
      */
-    if (vms->iommu == VIRT_IOMMU_SMMUV3_NESTED) {
+    if (vms->iommu == VIRT_IOMMU_SMMUV3_ACCEL) {
         cfg.preserve_config = true;
     }
 
@@ -619,10 +619,10 @@ build_iort(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
     /* Table 2 The IORT */
     acpi_table_begin(&table, table_data);
 
-    if (vms->smmu_nested_count) {
-        irq = vms->irqmap[VIRT_SMMU_NESTED] + ARM_SPI_BASE;
-        base = vms->memmap[VIRT_SMMU_NESTED].base;
-        num_smmus = vms->smmu_nested_count;
+    if (vms->smmu_accel_count) {
+        irq = vms->irqmap[VIRT_SMMU_ACCEL] + ARM_SPI_BASE;
+        base = vms->memmap[VIRT_SMMU_ACCEL].base;
+        num_smmus = vms->smmu_accel_count;
     } else if (virt_has_smmuv3(vms)) {
         irq = vms->irqmap[VIRT_SMMU] + ARM_SPI_BASE;
         base = vms->memmap[VIRT_SMMU].base;
@@ -655,7 +655,7 @@ build_iort(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
             }
 
             next_range.input_base = idmap->input_base + idmap->id_count;
-            if (vms->iommu == VIRT_IOMMU_SMMUV3_NESTED) {
+            if (vms->iommu == VIRT_IOMMU_SMMUV3_ACCEL) {
                 nb_nodes++; /* RMR node per SMMU */
             }
         }
@@ -775,7 +775,7 @@ build_iort(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
         build_iort_id_mapping(table_data, 0, 0x10000, IORT_NODE_OFFSET, 0);
     }
 
-    if (vms->iommu == VIRT_IOMMU_SMMUV3_NESTED) {
+    if (vms->iommu == VIRT_IOMMU_SMMUV3_ACCEL) {
         build_iort_rmr_nodes(table_data, smmu_idmaps, smmu_offset, &id);
     }
 

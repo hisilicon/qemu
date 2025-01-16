@@ -84,16 +84,16 @@ struct SMMUv3Class {
 #define TYPE_ARM_SMMUV3   "arm-smmuv3"
 OBJECT_DECLARE_TYPE(SMMUv3State, SMMUv3Class, ARM_SMMUV3)
 
-#define TYPE_ARM_SMMUV3_NESTED   "arm-smmuv3-nested"
-OBJECT_DECLARE_TYPE(SMMUv3NestedState, SMMUv3NestedClass, ARM_SMMUV3_NESTED)
+#define TYPE_ARM_SMMUV3_ACCEL   "arm-smmuv3-accel"
+OBJECT_DECLARE_TYPE(SMMUv3AccelState, SMMUv3AccelClass, ARM_SMMUV3_ACCEL)
 
-struct SMMUv3NestedState {
+struct SMMUv3AccelState {
     SMMUv3State smmuv3_state;
 
     char *pci_bus;
 };
 
-struct SMMUv3NestedClass {
+struct SMMUv3AccelClass {
     /*< private >*/
     SMMUv3Class smmuv3_class;
     /*< public >*/
