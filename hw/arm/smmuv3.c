@@ -2256,11 +2256,10 @@ static void smmu_realize(DeviceState *d, Error **errp)
 static int smmuv3_accel_pci_host_bridge(Object *obj, void *opaque)
 {
     DeviceState *d = opaque;
-    SMMUv3AccelState *s_accel = ARM_SMMUV3_ACCEL(d);
 
     if (object_dynamic_cast(obj, TYPE_PCI_HOST_BRIDGE)) {
         PCIBus *bus = PCI_HOST_BRIDGE(obj)->bus;
-        if (s_accel->pci_bus && !strcmp(bus->qbus.name, s_accel->pci_bus)) {
+        if (d->parent_bus && !strcmp(bus->qbus.name, d->parent_bus->name)) {
             object_property_set_link(OBJECT(d), "primary-bus", OBJECT(bus),
                                      &error_abort);
         }
@@ -2365,11 +2364,6 @@ static Property smmuv3_properties[] = {
     DEFINE_PROP_END_OF_LIST()
 };
 
-static Property smmuv3_accel_properties[] = {
-    DEFINE_PROP_STRING("pci-bus", SMMUv3AccelState, pci_bus),
-    DEFINE_PROP_END_OF_LIST()
-};
-
 static void smmuv3_instance_init(Object *obj)
 {
     /* Nothing much to do here as of now */
@@ -2397,9 +2391,9 @@ static void smmuv3_accel_class_init(ObjectClass *klass, void *data)
     dc->vmsd = &vmstate_smmuv3;
     device_class_set_parent_realize(dc, smmu_accel_realize,
                                     &c->parent_realize);
-    device_class_set_props(dc, smmuv3_accel_properties);
     dc->user_creatable = true;
     dc->hotpluggable = false;
+    dc->bus_type = TYPE_PCIE_BUS;
 }
 
 static int smmuv3_notify_flag_changed(IOMMUMemoryRegion *iommu,
