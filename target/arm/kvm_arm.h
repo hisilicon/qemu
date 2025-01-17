@@ -16,6 +16,12 @@
 #define KVM_ARM_VGIC_V2   (1 << 0)
 #define KVM_ARM_VGIC_V3   (1 << 1)
 
+#define MAX_TARGET_IMPL_CPUS    4
+typedef struct TargetImplCpu {
+     uint32_t midr;
+     uint32_t revidr;
+} TargetImplCpu;
+
 /**
  * kvm_arm_register_device:
  * @mr: memory region for this device

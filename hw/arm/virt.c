@@ -29,6 +29,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/cutils.h"
 #include "qemu/datadir.h"
 #include "qemu/units.h"
 #include "qemu/option.h"
@@ -2631,6 +2632,62 @@ static void virt_set_oem_table_id(Object *obj, const char *value,
     strncpy(vms->oem_table_id, value, 8);
 }
 
+static TargetImplCpu target_impl_cpus[MAX_TARGET_IMPL_CPUS];
+
+static void virt_set_target_impl_cpus(Object *obj, const char *value,
+                                      Error **errp)
+{
+    MachineState *ms = MACHINE(obj);
+    g_autofree char *target_dup = g_strdup(value);
+    char *target_impl = strtok(target_dup, "-");
+    int cnt = 0;
+
+    while (target_impl) {
+        char num[16];
+        long val;
+        const char *num_start = target_impl;
+        const char *num_end = strchr(num_start, ':');
+
+        if (!num_end) {
+            error_setg(errp,
+                       "Wrong format, Please use 0xmidr:0xrevid-0xmidr:0xrevid");
+            return;
+        }
+
+        strncpy(num, num_start, num_end - num_start);
+        num[num_end - num_start] = '\0';
+        if (qemu_strtol(num, NULL, 16, &val)) {
+            error_setg(errp,
+                       "Wrong format, Please use 0xmidr:0xrevid-0xmidr:0xrevid");
+            return;
+        }
+        target_impl_cpus[cnt].midr = val;
+        num_start = num_end + 1;
+        if (!(*num_start)) {
+            error_setg(errp,
+                       "Wrong format, Please use 0xmidr:0xrevid-0xmidr:0xrevid");
+            return;
+        }
+
+        strncpy(num, num_start, sizeof(num) - 1);
+        num[sizeof(num) - 1] = '\0';
+        if (qemu_strtol(num, NULL, 16, &val)) {
+            error_setg(errp,
+                       "Wrong format, Please use 0xmidr:0xrevid-0xmidr:0xrevid");
+            return;
+        }
+        target_impl_cpus[cnt].revidr = val;
+        cnt++;
+        if (cnt >= MAX_TARGET_IMPL_CPUS) {
+            error_setg(errp,
+                       "Wrong format, Max 4 targets can be set for now!");
+            return;
+        }
+        target_impl = strtok(NULL, "-");
+    }
+    ms->target_ipml_cpu_num = cnt;
+    ms->target_ipml_cpu = target_impl_cpus;
+}
 
 bool virt_is_acpi_enabled(VirtMachineState *vms)
 {
@@ -3282,6 +3339,13 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
                                           "Override the default value of field OEM Table ID "
                                           "in ACPI table header."
                                           "The string may be up to 8 bytes in size");
+
+    object_class_property_add_str(oc, "x-target-impl-cpus",
+                                  NULL,
+                                  virt_set_target_impl_cpus);
+    object_class_property_set_description(oc, "x-oem-table-id",
+                                          "Describe target cpu impl in the format midr1:revidr1-midr2:revidr2"
+                                          "Maximum 4 midr:revidr pair is supported");
 
 }
 

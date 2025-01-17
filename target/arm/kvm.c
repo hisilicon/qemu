@@ -65,7 +65,7 @@
 #define ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_VER    64
 #define ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_CPUS   65
 
-#define ARM_SMCCC_KVM_DISCOVER_IMPL_VER_1_0     0x10000
+#define ARM_SMCCC_KVM_DISCOVER_IMPL_VER_1_0     0x100000000
 
 #define ARM_SMCCC_CALL_VAL(type, calling_convention, owner, func_num) \
         (((type) << ARM_SMCCC_TYPE_SHIFT) | \
@@ -696,6 +696,47 @@ int kvm_arch_get_default_type(MachineState *ms)
     return fixed_ipa ? 0 : size;
 }
 
+static bool kvm_arm_set_vm_attr(struct kvm_device_attr *attr, const char *name)
+{
+    int err;
+
+    err = kvm_vm_ioctl(kvm_state, KVM_HAS_DEVICE_ATTR, attr);
+    if (err != 0) {
+        error_report("%s: KVM_HAS_DEVICE_ATTR: %s", name, strerror(-err));
+        return false;
+    }
+
+    err = kvm_vm_ioctl(kvm_state, KVM_SET_DEVICE_ATTR, attr);
+    if (err != 0) {
+        error_report("%s: KVM_SET_DEVICE_ATTR: %s", name, strerror(-err));
+        return false;
+    }
+
+    return true;
+}
+
+static int kvm_arm_set_smccc_filter(uint64_t func, uint8_t faction)
+{
+    struct kvm_smccc_filter filter = {
+        .base = func,
+        .nr_functions = 1,
+        .action = faction,
+    };
+    struct kvm_device_attr attr = {
+        .group = KVM_ARM_VM_SMCCC_CTRL,
+        .attr = KVM_ARM_VM_SMCCC_FILTER,
+        .flags = 0,
+        .addr = (uintptr_t)&filter,
+    };
+
+    if (!kvm_arm_set_vm_attr(&attr, "SMCCC Filter")) {
+        error_report("failed to set SMCCC filter in KVM Host");
+        return -1;
+    }
+
+    return 0;
+}
+
 int kvm_arch_init(MachineState *ms, KVMState *s)
 {
     int ret = 0;
@@ -760,6 +801,16 @@ int kvm_arch_init(MachineState *ms, KVMState *s)
     max_hw_bps = kvm_check_extension(s, KVM_CAP_GUEST_DEBUG_HW_BPS);
     hw_breakpoints = g_array_sized_new(true, true,
                                        sizeof(HWBreakpoint), max_hw_bps);
+
+    if (kvm_arm_set_smccc_filter(ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_VER_FUNC_ID,
+                                 KVM_SMCCC_FILTER_FWD_TO_USER)) {
+        error_report("ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_VER fwd filter install failed");
+    }
+
+    if (kvm_arm_set_smccc_filter(ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_CPUS_FUNC_ID,
+                                 KVM_SMCCC_FILTER_FWD_TO_USER)) {
+        error_report("ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_CPUS fwd filter install failed");
+    }
 
     return ret;
 }
@@ -1589,6 +1640,75 @@ static bool kvm_arm_handle_debug(ARMCPU *cpu,
     return false;
 }
 
+static void arm_handle_smcc_kvm_vendor_hypercall(ARMCPU *cpu)
+{
+    MachineState *ms = MACHINE(qdev_get_machine());
+    CPUARMState *env = &cpu->env;
+    uint64_t param[4];
+    int idx;
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        /*
+         * All PSCI functions take explicit 32-bit or native int sized
+         * arguments so we can simply zero-extend all arguments regardless
+         * of which exact function we are about to call.
+         */
+        param[i] = is_a64(env) ? env->xregs[i] : env->regs[i];
+    }
+
+    if (is_a64(env)) {
+        TargetImplCpu *target = ms->target_ipml_cpu;
+
+        switch (param[0]) {
+        case ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_VER_FUNC_ID:
+            if (!ms->target_ipml_cpu_num) {
+                env->xregs[0] = SMCCC_RET_NOT_SUPPORTED;
+                return;
+            }
+            env->xregs[0] = SMCCC_RET_SUCCESS;
+            env->xregs[1] = ARM_SMCCC_KVM_DISCOVER_IMPL_VER_1_0;
+            env->xregs[2] = ms->target_ipml_cpu_num;
+            break;
+        case ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_CPUS_FUNC_ID:
+            idx = param[1];
+            if (idx >= ms->target_ipml_cpu_num) {
+                env->xregs[0] = SMCCC_RET_INVALID_PARAMETER;
+                return;
+            }
+            env->xregs[0] = SMCCC_RET_SUCCESS;
+            env->xregs[1] = target[idx].midr;
+            env->xregs[2] = target[idx].revidr;
+            break;
+        default:
+            env->xregs[0] = SMCCC_RET_NOT_SUPPORTED;
+        }
+    } else {
+        env->regs[0] = SMCCC_RET_NOT_SUPPORTED;
+    }
+}
+
+static int kvm_arm_handle_hypercall(CPUState *cs, struct kvm_run *run)
+{
+    ARMCPU *cpu = ARM_CPU(cs);
+    CPUARMState *env = &cpu->env;
+
+    kvm_cpu_synchronize_state(cs);
+
+    if (run->hypercall.flags == KVM_HYPERCALL_EXIT_SMC) {
+        cs->exception_index = EXCP_SMC;
+        env->exception.syndrome = syn_aa64_smc(0);
+    } else {
+        cs->exception_index = EXCP_HVC;
+        env->exception.syndrome = syn_aa64_hvc(0);
+    }
+    env->exception.target_el = 1;
+
+    arm_handle_smcc_kvm_vendor_hypercall(cpu);
+
+    return EXCP_INTERRUPT;
+}
+
 int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
 {
     ARMCPU *cpu = ARM_CPU(cs);
@@ -1604,6 +1724,9 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
         /* External DABT with no valid iss to decode */
         ret = kvm_arm_handle_dabt_nisv(cpu, run->arm_nisv.esr_iss,
                                        run->arm_nisv.fault_ipa);
+        break;
+    case KVM_EXIT_HYPERCALL:
+        ret = kvm_arm_handle_hypercall(cs, run);
         break;
     default:
         qemu_log_mask(LOG_UNIMP, "%s: un-handled exit reason %d\n",
