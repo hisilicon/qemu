@@ -65,8 +65,6 @@
 #define ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_VER    64
 #define ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_CPUS   65
 
-#define ARM_SMCCC_KVM_DISCOVER_IMPL_VER_1_0     0x100000000
-
 #define ARM_SMCCC_CALL_VAL(type, calling_convention, owner, func_num) \
         (((type) << ARM_SMCCC_TYPE_SHIFT) | \
         ((calling_convention) << ARM_SMCCC_CALL_CONV_SHIFT) | \
@@ -1667,7 +1665,7 @@ static void arm_handle_smcc_kvm_vendor_hypercall(ARMCPU *cpu)
                 return;
             }
             env->xregs[0] = SMCCC_RET_SUCCESS;
-            env->xregs[1] = ARM_SMCCC_KVM_DISCOVER_IMPL_VER_1_0;
+            env->xregs[1] = PSCI_VERSION(1, 0);
             env->xregs[2] = ms->target_ipml_cpu_num;
             break;
         case ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_CPUS_FUNC_ID:
