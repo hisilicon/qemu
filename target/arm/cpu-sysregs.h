@@ -41,6 +41,8 @@ int get_sysreg_idx(ARMSysRegs sysreg);
 
 #ifdef CONFIG_KVM
 uint64_t idregs_sysreg_to_kvm_reg(ARMSysRegs sysreg);
+int kvm_idx_to_idregs_idx(int kidx);
+int idregs_idx_to_kvm_idx(ARMIDRegisterIdx idx);
 #endif
 
 #endif /* ARM_CPU_SYSREGS_H */
