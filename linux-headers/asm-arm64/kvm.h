@@ -375,6 +375,14 @@ enum {
 	KVM_REG_ARM_VENDOR_HYP_BIT_PTP		= 1,
 };
 
+/* Vendor hyper call function numbers 64-127 */
+#define KVM_REG_ARM_VENDOR_HYP_BMAP_2           KVM_REG_ARM_FW_FEAT_BMAP_REG(3)
+
+enum {
+        KVM_REG_ARM_VENDOR_HYP_BIT_DISCOVER_IMPL_VER    = 0,
+        KVM_REG_ARM_VENDOR_HYP_BIT_DISCOVER_IMPL_CPUS   = 1,
+};
+
 /* Device Control API on vm fd */
 #define KVM_ARM_VM_SMCCC_CTRL		0
 #define   KVM_ARM_VM_SMCCC_FILTER	0

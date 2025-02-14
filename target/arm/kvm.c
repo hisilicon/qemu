@@ -2158,6 +2158,14 @@ static int kvm_arm_sve_set_vls(ARMCPU *cpu)
     return kvm_set_one_reg(CPU(cpu), KVM_REG_ARM64_SVE_VLS, &vls[0]);
 }
 
+static int kvm_arm_set_vend_hyp_bmap_2(ARMCPU *cpu)
+{
+    /* Set DISCOVER_IMPL_* hypercalls */
+    uint64_t bmap_2 = MAKE_64BIT_MASK(0, 2);
+
+    return kvm_set_one_reg(CPU(cpu), KVM_REG_ARM_VENDOR_HYP_BMAP_2, &bmap_2);
+}
+
 #define ARM_CPU_ID_MPIDR       3, 0, 0, 0, 5
 
 int kvm_arch_init_vcpu(CPUState *cs)
@@ -2220,6 +2228,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
         }
     }
 
+    kvm_arm_set_vend_hyp_bmap_2(cpu);
     /*
      * KVM reports the exact PSCI version it is implementing via a
      * special sysreg. If it is present, use its contents to determine
