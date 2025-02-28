@@ -9,6 +9,21 @@
 #include "qemu/osdep.h"
 
 #include "hw/arm/smmuv3-accel.h"
+#include "hw/pci/pci_bridge.h"
+
+static int smmuv3_accel_pxb_pcie_bus(Object *obj, void *opaque)
+{
+    DeviceState *d = opaque;
+
+    if (object_dynamic_cast(obj, "pxb-pcie-bus")) {
+        PCIBus *bus = PCI_HOST_BRIDGE(obj->parent)->bus;
+        if (d->parent_bus && !strcmp(bus->qbus.name, d->parent_bus->name)) {
+            object_property_set_link(OBJECT(d), "primary-bus", OBJECT(bus),
+                                     &error_abort);
+        }
+    }
+    return 0;
+}
 
 static void smmu_accel_realize(DeviceState *d, Error **errp)
 {
@@ -16,6 +31,9 @@ static void smmu_accel_realize(DeviceState *d, Error **errp)
     SMMUv3AccelClass *c = ARM_SMMUV3_ACCEL_GET_CLASS(s_accel);
     SysBusDevice *dev = SYS_BUS_DEVICE(d);
     Error *local_err = NULL;
+
+    object_child_foreach_recursive(object_get_root(),
+                                   smmuv3_accel_pxb_pcie_bus, d);
 
     object_property_set_bool(OBJECT(dev), "accel", true, &error_abort);
     c->parent_realize(d, &local_err);
@@ -33,6 +51,7 @@ static void smmuv3_accel_class_init(ObjectClass *klass, void *data)
     device_class_set_parent_realize(dc, smmu_accel_realize,
                                     &c->parent_realize);
     dc->hotpluggable = false;
+    dc->bus_type = TYPE_PCIE_BUS;
 }
 
 static const TypeInfo smmuv3_accel_type_info = {
