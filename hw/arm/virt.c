@@ -73,6 +73,7 @@
 #include "qobject/qlist.h"
 #include "standard-headers/linux/input.h"
 #include "hw/arm/smmuv3.h"
+#include "hw/arm/smmuv3-accel.h"
 #include "hw/acpi/acpi.h"
 #include "target/arm/cpu-qom.h"
 #include "target/arm/internals.h"
@@ -2911,6 +2912,16 @@ static void virt_machine_device_plug_cb(HotplugHandler *hotplug_dev,
             platform_bus_link_device(PLATFORM_BUS_DEVICE(vms->platform_bus_dev),
                                      SYS_BUS_DEVICE(dev));
         }
+        if (object_dynamic_cast(OBJECT(dev), TYPE_ARM_SMMUV3_ACCEL)) {
+            if (vms->iommu == VIRT_IOMMU_SMMUV3) {
+                error_setg(errp,
+                           "iommu=smmuv3 is already specified. can't create smmuv3-accel dev");
+                return;
+            }
+            if (vms->iommu != VIRT_IOMMU_SMMUV3_ACCEL) {
+                vms->iommu = VIRT_IOMMU_SMMUV3_ACCEL;
+            }
+        }
     }
 
     if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
@@ -3120,6 +3131,7 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_VFIO_AMD_XGBE);
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_RAMFB_DEVICE);
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_VFIO_PLATFORM);
+    machine_class_allow_dynamic_sysbus_dev(mc, TYPE_ARM_SMMUV3_ACCEL);
 #ifdef CONFIG_TPM
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_TPM_TIS_SYSBUS);
 #endif
