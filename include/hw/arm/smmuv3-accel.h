@@ -16,6 +16,10 @@
 #define TYPE_ARM_SMMUV3_ACCEL   "arm-smmuv3-accel"
 OBJECT_DECLARE_TYPE(SMMUv3AccelState, SMMUv3AccelClass, ARM_SMMUV3_ACCEL)
 
+typedef struct SMMUv3AccelDevice {
+    SMMUDevice  sdev;
+} SMMUv3AccelDevice;
+
 struct SMMUv3AccelState {
     SMMUv3State smmuv3_state;
 };
