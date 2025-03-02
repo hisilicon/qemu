@@ -160,6 +160,11 @@ struct SMMUState {
 
     /* For smmuv3-accel */
     bool accel;
+
+    AddressSpace * (*get_address_space)(PCIBus *bus, void *opaque, int devfn);
+    bool (*set_iommu_device)(PCIBus *bus, void *opaque, int devfn,
+                             HostIOMMUDevice *dev, Error **errp);
+    void (*unset_iommu_device)(PCIBus *bus, void *opaque, int devfn);
 };
 
 struct SMMUBaseClass {

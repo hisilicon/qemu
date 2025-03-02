@@ -865,6 +865,10 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
     SMMUState *s = opaque;
     SMMUPciBus *sbus = smmu_get_sbus(s, bus);
 
+    if (s->accel && s->get_address_space) {
+        return s->get_address_space(bus, opaque, devfn);
+    }
+
     sdev = sbus->pbdev[devfn];
     if (!sdev) {
         sdev = sbus->pbdev[devfn] = g_new0(SMMUDevice, 1);
@@ -874,8 +878,31 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
     return &sdev->as;
 }
 
+static bool smmu_dev_set_iommu_device(PCIBus *bus, void *opaque, int devfn,
+                                      HostIOMMUDevice *hiod, Error **errp)
+{
+    SMMUState *s = opaque;
+
+    if (s->accel && s->set_iommu_device) {
+        return s->set_iommu_device(bus, opaque, devfn, hiod, errp);
+    }
+
+    return false;
+}
+
+static void smmu_dev_unset_iommu_device(PCIBus *bus, void *opaque, int devfn)
+{
+    SMMUState *s = opaque;
+
+    if (s->accel && s->unset_iommu_device) {
+        s->unset_iommu_device(bus, opaque, devfn);
+    }
+}
+
 static const PCIIOMMUOps smmu_ops = {
     .get_address_space = smmu_find_add_as,
+    .set_iommu_device = smmu_dev_set_iommu_device,
+    .unset_iommu_device = smmu_dev_unset_iommu_device,
 };
 
 SMMUDevice *smmu_find_sdev(SMMUState *s, uint32_t sid)
