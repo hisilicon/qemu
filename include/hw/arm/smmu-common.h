@@ -157,6 +157,9 @@ struct SMMUState {
     QLIST_HEAD(, SMMUDevice) devices_with_notifiers;
     uint8_t bus_num;
     PCIBus *primary_bus;
+
+    /* For smmuv3-accel */
+    bool accel;
 };
 
 struct SMMUBaseClass {

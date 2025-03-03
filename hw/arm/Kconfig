@@ -14,6 +14,7 @@ config ARM_VIRT
     select ARM_GIC
     select ACPI
     select ARM_SMMUV3
+    select ARM_SMMUV3_ACCEL
     select GPIO_KEY
     select DEVICE_TREE
     select FW_CFG_DMA
@@ -594,6 +595,10 @@ config FSL_IMX7
     select USB_CHIPIDEA
 
 config ARM_SMMUV3
+    bool
+
+config ARM_SMMUV3_ACCEL
+    select ARM_SMMUV3
     bool
 
 config FSL_IMX6UL
