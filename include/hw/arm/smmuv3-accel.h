@@ -51,12 +51,15 @@ typedef struct SMMUv3AccelDevice {
     SMMUS1Hwpt  *s1_hwpt;
     SMMUViommu *viommu;
     SMMUVdev   *vdev;
+    AddressSpace as_sysmem;
     QLIST_ENTRY(SMMUv3AccelDevice) next;
 } SMMUv3AccelDevice;
 
 struct SMMUv3AccelState {
     SMMUv3State smmuv3_state;
     SMMUViommu *viommu;
+    MemoryRegion root;
+    MemoryRegion sysmem;
 };
 
 struct SMMUv3AccelClass {

@@ -18,6 +18,7 @@
 static SMMUv3AccelDevice *smmuv3_accel_get_dev(SMMUState *s, SMMUPciBus *sbus,
                                                 PCIBus *bus, int devfn)
 {
+    SMMUv3AccelState *s_accel = ARM_SMMUV3_ACCEL(s);
     SMMUDevice *sdev = sbus->pbdev[devfn];
     SMMUv3AccelDevice *accel_dev;
 
@@ -29,6 +30,8 @@ static SMMUv3AccelDevice *smmuv3_accel_get_dev(SMMUState *s, SMMUPciBus *sbus,
 
         sbus->pbdev[devfn] = sdev;
         smmu_init_sdev(s, sdev, bus, devfn);
+        address_space_init(&accel_dev->as_sysmem, &s_accel->root,
+                           "smmuv3-accel-sysmem");
     }
 
     return accel_dev;
@@ -351,12 +354,23 @@ static AddressSpace *smmuv3_accel_find_add_as(PCIBus *bus, void *opaque,
     SMMUPciBus *sbus;
     SMMUv3AccelDevice *accel_dev;
     SMMUDevice *sdev;
+    PCIDevice *pdev = pci_find_device(bus, pci_bus_num(bus), devfn);
+    bool has_iommufd = false;
+
+    if (pdev) {
+        has_iommufd = object_property_find(OBJECT(pdev), "iommufd");
+    }
 
     sbus = smmu_get_sbus(s, bus);
     accel_dev = smmuv3_accel_get_dev(s, sbus, bus, devfn);
     sdev = &accel_dev->sdev;
 
-    return &sdev->as;
+    /* Return the system as if the device uses stage-2 only */
+    if (has_iommufd && !accel_dev->s1_hwpt) {
+        return &accel_dev->as_sysmem;
+    } else {
+        return &sdev->as;
+    }
 }
 
 static int smmuv3_accel_pxb_pcie_bus(Object *obj, void *opaque)
@@ -390,6 +404,12 @@ static void smmu_accel_realize(DeviceState *d, Error **errp)
         error_propagate(errp, local_err);
         return;
     }
+
+    memory_region_init(&s_accel->root, OBJECT(s_accel), "root", UINT64_MAX);
+    memory_region_init_alias(&s_accel->sysmem, OBJECT(s_accel),
+                             "smmuv3-accel-sysmem", get_system_memory(), 0,
+                             memory_region_size(get_system_memory()));
+    memory_region_add_subregion(&s_accel->root, 0, &s_accel->sysmem);
     bs->get_address_space = smmuv3_accel_find_add_as;
     bs->set_iommu_device = smmuv3_accel_set_iommu_device;
     bs->unset_iommu_device = smmuv3_accel_unset_iommu_device;
