@@ -109,6 +109,20 @@ void smmuv3_accel_install_nested_ste(SMMUDevice *sdev, int sid)
         return;
     }
 
+    if (!accel_dev->vdev && accel_dev->idev) {
+        SMMUVdev *vdev;
+        uint32_t vdev_id;
+        SMMUViommu *viommu = accel_dev->viommu;
+
+        iommufd_backend_alloc_vdev(viommu->core.iommufd, accel_dev->idev->devid,
+                                   viommu->core.viommu_id, sid, &vdev_id,
+                                   &error_abort);
+        vdev = g_new0(SMMUVdev, 1);
+        vdev->vdev_id = vdev_id;
+        vdev->sid = sid;
+        accel_dev->vdev = vdev;
+    }
+
     ret = smmu_find_ste(sdev->smmu, sid, &ste, &event);
     if (ret) {
         /*
@@ -283,6 +297,7 @@ static bool smmuv3_accel_set_iommu_device(PCIBus *bus, void *opaque, int devfn,
 static void smmuv3_accel_unset_iommu_device(PCIBus *bus, void *opaque,
                                             int devfn)
 {
+    SMMUVdev *vdev;
     SMMUDevice *sdev;
     SMMUv3AccelDevice *accel_dev;
     SMMUViommu *viommu;
@@ -312,6 +327,13 @@ static void smmuv3_accel_unset_iommu_device(PCIBus *bus, void *opaque,
     trace_smmuv3_accel_unset_iommu_device(devfn, smmu_get_sid(sdev));
 
     viommu = s_accel->viommu;
+    vdev = accel_dev->vdev;
+    if (vdev) {
+        iommufd_backend_free_id(viommu->iommufd, vdev->vdev_id);
+        g_free(vdev);
+        accel_dev->vdev = NULL;
+    }
+
     if (QLIST_EMPTY(&viommu->device_list)) {
         iommufd_backend_free_id(viommu->iommufd, viommu->bypass_hwpt_id);
         iommufd_backend_free_id(viommu->iommufd, viommu->abort_hwpt_id);

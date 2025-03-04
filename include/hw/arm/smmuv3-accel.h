@@ -35,6 +35,11 @@ typedef struct SMMUViommu {
     QLIST_ENTRY(SMMUViommu) next;
 } SMMUViommu;
 
+typedef struct SMMUVdev {
+    uint32_t vdev_id;
+    uint32_t sid;
+} SMMUVdev;
+
 typedef struct SMMUS1Hwpt {
     IOMMUFDBackend *iommufd;
     uint32_t hwpt_id;
@@ -45,6 +50,7 @@ typedef struct SMMUv3AccelDevice {
     HostIOMMUDeviceIOMMUFD *idev;
     SMMUS1Hwpt  *s1_hwpt;
     SMMUViommu *viommu;
+    SMMUVdev   *vdev;
     QLIST_ENTRY(SMMUv3AccelDevice) next;
 } SMMUv3AccelDevice;
 
