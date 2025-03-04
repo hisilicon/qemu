@@ -24,6 +24,8 @@
 #include "hw/registerfields.h"
 #include "hw/arm/smmu-common.h"
 
+#include CONFIG_DEVICES
+
 typedef enum SMMUTranslationStatus {
     SMMU_TRANS_DISABLE,
     SMMU_TRANS_ABORT,
@@ -547,6 +549,17 @@ typedef struct CD {
     uint32_t word[16];
 } CD;
 
+int smmu_find_ste(SMMUv3State *s, uint32_t sid, STE *ste,
+                  SMMUEventInfo *event);
+void smmuv3_flush_config(SMMUDevice *sdev);
+
+#if defined(CONFIG_ARM_SMMUV3_ACCEL) && defined(CONFIG_IOMMUFD)
+void smmuv3_accel_install_nested_ste(SMMUDevice *sdev, int sid);
+#else
+static inline void smmuv3_accel_install_nested_ste(SMMUDevice *sdev, int sid)
+{
+}
+#endif
 /* STE fields */
 
 #define STE_VALID(x)   extract32((x)->word[0], 0, 1)
