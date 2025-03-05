@@ -1286,6 +1286,7 @@ smmuv3_invalidate_ste(gpointer key, gpointer value, gpointer user_data)
     if (sid < sid_range->start || sid > sid_range->end) {
         return false;
     }
+    smmuv3_accel_install_nested_ste(sdev, sid);
     trace_smmuv3_config_cache_inv(sid);
     return true;
 }
@@ -1353,6 +1354,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
 
             trace_smmuv3_cmdq_cfgi_ste(sid);
             smmuv3_flush_config(sdev);
+            smmuv3_accel_install_nested_ste(sdev, sid);
 
             break;
         }
