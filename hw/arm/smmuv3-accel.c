@@ -15,6 +15,96 @@
 
 #include "smmuv3-internal.h"
 
+static int
+smmuv3_accel_dev_get_info(SMMUv3AccelDevice *accel_dev, uint32_t *data_type,
+                          uint32_t data_len, void *data)
+{
+    uint64_t caps;
+
+    if (!accel_dev || !accel_dev->idev) {
+        return -ENOENT;
+    }
+
+    return !iommufd_backend_get_device_info(accel_dev->idev->iommufd,
+                                            accel_dev->idev->devid,
+                                            data_type, data,
+                                            data_len, &caps, NULL);
+}
+
+static void smmuv3_accel_init_regs(SMMUv3AccelState *s_accel)
+{
+    SMMUv3State *s = ARM_SMMUV3(s_accel);
+    SMMUv3AccelDevice *accel_dev;
+    uint32_t data_type;
+    uint32_t val;
+    int ret;
+
+    if (!s_accel->viommu || QLIST_EMPTY(&s_accel->viommu->device_list)) {
+        error_report("At least one cold-plugged vfio-pci is required for smmuv3-accel!");
+        exit(1);
+    }
+
+    accel_dev = QLIST_FIRST(&s_accel->viommu->device_list);
+    if (accel_dev->info.idr[0]) {
+        info_report("reusing the previous hw_info");
+        goto out;
+    }
+
+    ret = smmuv3_accel_dev_get_info(accel_dev, &data_type,
+                                    sizeof(accel_dev->info), &accel_dev->info);
+    if (ret) {
+        error_report("failed to get SMMU device info");
+        return;
+    }
+
+    if (data_type != IOMMU_HW_INFO_TYPE_ARM_SMMUV3) {
+        error_report("Wrong data type (%d)!", data_type);
+        return;
+    }
+
+out:
+    trace_smmuv3_accel_get_device_info(accel_dev->info.idr[0],
+                                       accel_dev->info.idr[1],
+                                       accel_dev->info.idr[3],
+                                       accel_dev->info.idr[5]);
+
+    val = FIELD_EX32(accel_dev->info.idr[0], IDR0, BTM);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, BTM, val);
+    val = FIELD_EX32(accel_dev->info.idr[0], IDR0, ATS);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, ATS, val);
+    val = FIELD_EX32(accel_dev->info.idr[0], IDR0, ASID16);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, ASID16, val);
+    val = FIELD_EX32(accel_dev->info.idr[0], IDR0, TERM_MODEL);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, TERM_MODEL, val);
+    val = FIELD_EX32(accel_dev->info.idr[0], IDR0, STALL_MODEL);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, STALL_MODEL, val);
+    val = FIELD_EX32(accel_dev->info.idr[0], IDR0, STLEVEL);
+    s->idr[0] = FIELD_DP32(s->idr[0], IDR0, STLEVEL, val);
+
+    val = FIELD_EX32(accel_dev->info.idr[1], IDR1, SIDSIZE);
+    s->idr[1] = FIELD_DP32(s->idr[1], IDR1, SIDSIZE, val);
+    val = FIELD_EX32(accel_dev->info.idr[1], IDR1, SSIDSIZE);
+    s->idr[1] = FIELD_DP32(s->idr[1], IDR1, SSIDSIZE, val);
+
+    val = FIELD_EX32(accel_dev->info.idr[3], IDR3, HAD);
+    s->idr[3] = FIELD_DP32(s->idr[3], IDR3, HAD, val);
+    val = FIELD_EX32(accel_dev->info.idr[3], IDR3, RIL);
+    s->idr[3] = FIELD_DP32(s->idr[3], IDR3, RIL, val);
+    val = FIELD_EX32(accel_dev->info.idr[3], IDR3, BBML);
+    s->idr[3] = FIELD_DP32(s->idr[3], IDR3, BBML, val);
+
+    val = FIELD_EX32(accel_dev->info.idr[5], IDR5, GRAN4K);
+    s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN4K, val);
+    val = FIELD_EX32(accel_dev->info.idr[5], IDR5, GRAN16K);
+    s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN16K, val);
+    val = FIELD_EX32(accel_dev->info.idr[5], IDR5, GRAN64K);
+    s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN64K, val);
+    val = FIELD_EX32(accel_dev->info.idr[5], IDR5, OAS);
+    s->idr[5] = FIELD_DP32(s->idr[5], IDR5, OAS, val);
+
+    /* FIXME check iidr and aidr registrs too */
+}
+
 static SMMUv3AccelDevice *smmuv3_accel_get_dev(SMMUState *s, SMMUPciBus *sbus,
                                                 PCIBus *bus, int devfn)
 {
@@ -484,11 +574,25 @@ static void smmu_accel_realize(DeviceState *d, Error **errp)
     bs->unset_iommu_device = smmuv3_accel_unset_iommu_device;
 }
 
+static void smmuv3_accel_reset_hold(Object *obj, ResetType type)
+{
+    SMMUv3AccelState *s = ARM_SMMUV3_ACCEL(obj);
+    SMMUv3AccelClass *c = ARM_SMMUV3_ACCEL_GET_CLASS(s);
+
+    if (c->parent_phases.hold) {
+        c->parent_phases.hold(obj, type);
+    }
+    smmuv3_accel_init_regs(s);
+}
+
 static void smmuv3_accel_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
     SMMUv3AccelClass *c = ARM_SMMUV3_ACCEL_CLASS(klass);
 
+    resettable_class_set_parent_phases(rc, NULL, smmuv3_accel_reset_hold, NULL,
+                                       &c->parent_phases);
     device_class_set_parent_realize(dc, smmu_accel_realize,
                                     &c->parent_realize);
     dc->hotpluggable = false;

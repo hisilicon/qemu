@@ -52,6 +52,7 @@ typedef struct SMMUv3AccelDevice {
     SMMUViommu *viommu;
     SMMUVdev   *vdev;
     AddressSpace as_sysmem;
+    struct iommu_hw_info_arm_smmuv3 info;
     QLIST_ENTRY(SMMUv3AccelDevice) next;
 } SMMUv3AccelDevice;
 
@@ -68,6 +69,7 @@ struct SMMUv3AccelClass {
     /*< public >*/
 
     DeviceRealize parent_realize;
+    ResettablePhases parent_phases;
 };
 
 #endif /* HW_ARM_SMMUV3_ACCEL_H */
