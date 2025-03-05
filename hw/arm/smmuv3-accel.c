@@ -160,6 +160,75 @@ void smmuv3_accel_install_nested_ste(SMMUDevice *sdev, int sid)
                                           nested_data.ste[0]);
 }
 
+/* Update batch->ncmds to the number of execute cmds */
+int smmuv3_accel_issue_cmd_batch(SMMUState *bs, SMMUCommandBatch *batch)
+{
+    SMMUv3AccelState *s_accel = ARM_SMMUV3_ACCEL(bs);
+    uint32_t total = batch->ncmds;
+    IOMMUFDViommu *viommu_core;
+    int ret;
+
+    if (!bs->accel) {
+        return 0;
+    }
+
+    if (!s_accel->viommu) {
+        return 0;
+    }
+    viommu_core = &s_accel->viommu->core;
+    ret = iommufd_backend_invalidate_cache(viommu_core->iommufd,
+                                           viommu_core->viommu_id,
+                                           IOMMU_VIOMMU_INVALIDATE_DATA_ARM_SMMUV3,
+                                           sizeof(Cmd), &batch->ncmds,
+                                           batch->cmds);
+    if (total != batch->ncmds) {
+        error_report("%s failed: ret=%d, total=%d, done=%d",
+                      __func__, ret, total, batch->ncmds);
+        return ret;
+    }
+
+    batch->ncmds = 0;
+    batch->dev_cache = false;
+    return ret;
+}
+
+int smmuv3_accel_batch_cmds(SMMUState *bs, SMMUDevice *sdev,
+                            SMMUCommandBatch *batch, Cmd *cmd,
+                            uint32_t *cons, bool dev_cache)
+{
+    int ret;
+
+    if (!bs->accel) {
+        return 0;
+    }
+
+    if (sdev) {
+        SMMUv3AccelDevice *accel_dev;
+        accel_dev = container_of(sdev, SMMUv3AccelDevice, sdev);
+        if (!accel_dev->s1_hwpt) {
+            return 0;
+        }
+    }
+
+    /*
+     * Currently separate out dev_cache and hwpt for safety, which might
+     * not be necessary if underlying HW SMMU does not have the errata.
+     *
+     * TODO check IIDR register values read from hw_info.
+     */
+    if (batch->ncmds && (dev_cache != batch->dev_cache)) {
+        ret = smmuv3_accel_issue_cmd_batch(bs, batch);
+        if (ret) {
+            *cons = batch->cons[batch->ncmds];
+            return ret;
+        }
+    }
+    batch->dev_cache = dev_cache;
+    batch->cmds[batch->ncmds] = *cmd;
+    batch->cons[batch->ncmds++] = *cons;
+    return 0;
+}
+
 static bool
 smmuv3_accel_dev_attach_viommu(SMMUv3AccelDevice *accel_dev,
                                HostIOMMUDeviceIOMMUFD *idev, Error **errp)

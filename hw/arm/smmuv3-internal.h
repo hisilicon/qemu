@@ -549,13 +549,42 @@ typedef struct CD {
     uint32_t word[16];
 } CD;
 
+/**
+ * SMMUCommandBatch - batch of invalidation commands for smmuv3-accel
+ * @cmds: Pointer to list of commands
+ * @cons: Pointer to list of CONS corresponding to the commands
+ * @ncmds: Total ncmds in the batch
+ * @dev_cache: Issue to a device cache
+ */
+typedef struct SMMUCommandBatch {
+    Cmd *cmds;
+    uint32_t *cons;
+    uint32_t ncmds;
+    bool dev_cache;
+} SMMUCommandBatch;
+
 int smmu_find_ste(SMMUv3State *s, uint32_t sid, STE *ste,
                   SMMUEventInfo *event);
 void smmuv3_flush_config(SMMUDevice *sdev);
 
 #if defined(CONFIG_ARM_SMMUV3_ACCEL) && defined(CONFIG_IOMMUFD)
+int smmuv3_accel_issue_cmd_batch(SMMUState *bs, SMMUCommandBatch *batch);
+int smmuv3_accel_batch_cmds(SMMUState *bs, SMMUDevice *sdev,
+                            SMMUCommandBatch *batch, Cmd *cmd,
+                            uint32_t *cons, bool dev_cache);
 void smmuv3_accel_install_nested_ste(SMMUDevice *sdev, int sid);
 #else
+static inline int smmuv3_accel_issue_cmd_batch(SMMUState *bs,
+                                               SMMUCommandBatch *batch)
+{
+    return 0;
+}
+static inline int smmuv3_accel_batch_cmds(SMMUState *bs, SMMUDevice *sdev,
+                                          SMMUCommandBatch *batch, Cmd *cmd,
+                                          uint32_t *cons, bool dev_cache)
+{
+    return 0;
+}
 static inline void smmuv3_accel_install_nested_ste(SMMUDevice *sdev, int sid)
 {
 }
