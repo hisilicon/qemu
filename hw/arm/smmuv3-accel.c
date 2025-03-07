@@ -595,6 +595,7 @@ static void smmuv3_accel_class_init(ObjectClass *klass, void *data)
                                        &c->parent_phases);
     device_class_set_parent_realize(dc, smmu_accel_realize,
                                     &c->parent_realize);
+    dc->user_creatable = true;
     dc->hotpluggable = false;
     dc->bus_type = TYPE_PCIE_BUS;
 }
