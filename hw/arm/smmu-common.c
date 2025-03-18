@@ -816,6 +816,7 @@ static void smmu_dev_unset_iommu_device(PCIBus *bus, void *opaque, int devfn)
 
     sdev->idev = NULL;
     sdev->viommu = NULL;
+    sdev->vdev = NULL;
     QLIST_REMOVE(sdev, next);
     trace_smmu_unset_iommu_device(devfn, smmu_get_sid(sdev));
 
