@@ -944,7 +944,7 @@ bool vfio_migration_realize(VFIODevice *vbasedev, Error **errp)
 
         return !vfio_block_migration(vbasedev, err, errp);
     }
-
+#if 0
     if ((!vbasedev->dirty_pages_supported ||
          vbasedev->device_dirty_page_tracking == ON_OFF_AUTO_OFF) &&
         !vbasedev->iommu_dirty_tracking) {
@@ -958,23 +958,23 @@ bool vfio_migration_realize(VFIODevice *vbasedev, Error **errp)
         warn_report("%s: VFIO device doesn't support device and "
                     "IOMMU dirty tracking", vbasedev->name);
     }
-
+#endif
     ret = vfio_block_multiple_devices_migration(vbasedev, errp);
     if (ret) {
         goto out_deinit;
     }
-
+#if 0
     if (vfio_viommu_preset(vbasedev)) {
         error_setg(&err, "%s: Migration is currently not supported "
                    "with vIOMMU enabled", vbasedev->name);
         goto add_blocker;
     }
-
+#endif
     trace_vfio_migration_realize(vbasedev->name);
     return true;
 
-add_blocker:
-    ret = vfio_block_migration(vbasedev, err, errp);
+//add_blocker:
+//    ret = vfio_block_migration(vbasedev, err, errp);
 out_deinit:
     if (ret) {
         vfio_migration_deinit(vbasedev);
