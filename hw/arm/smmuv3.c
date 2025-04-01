@@ -42,6 +42,62 @@
                                  (cfg)->s2cfg.record_faults)
 
 /**
+ * SMMUCommandBatch - batch of commands to issue for nested SMMU invalidation
+ * @cmds: Pointer to list of commands
+ * @cons: Pointer to list of CONS corresponding to the commands
+ * @ncmds: Total ncmds in the batch
+ * @dev_cache: Issue to a device cache
+ */
+typedef struct SMMUCommandBatch {
+    Cmd *cmds;
+    uint32_t *cons;
+    uint32_t ncmds;
+    bool dev_cache;
+} SMMUCommandBatch;
+
+static int smmuv3_issue_cmd_batch(SMMUState *bs, SMMUCommandBatch *batch);
+static int smmuv3_batch_cmds(SMMUState *bs, SMMUCommandBatch *batch,
+                             Cmd *cmd, uint32_t *cons, bool dev_cache);
+
+static int smmuv3_issue_cmd(SMMUState *bs, uint32_t cmd_id, uint32_t sid)
+{
+    SMMUCommandBatch batch = {};
+    Cmd cmd = {};
+    uint32_t ncmds = 1;
+    uint32_t cons = 0;
+    int ret;
+
+    if (!bs->nested || !bs->viommu) {
+        return 0;
+    }
+
+    switch (cmd_id) {
+    case SMMU_CMD_CFGI_CD_ALL:
+        cmd.word[0] = cmd_id;
+        cmd.word[1] = sid;
+        break;
+    case SMMU_CMD_TLBI_NH_ALL:
+        cmd.word[0] = cmd_id;
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    batch.cmds = g_new0(Cmd, ncmds);
+    batch.cons = g_new0(uint32_t, ncmds);
+    ret = smmuv3_batch_cmds(bs, &batch, &cmd, &cons, false);
+    if (ret) {
+        return ret;
+    }
+
+    ret = smmuv3_issue_cmd_batch(bs, &batch);
+
+    g_free(batch.cmds);
+    g_free(batch.cons);
+    return ret;
+}
+
+/**
  * smmuv3_trigger_irq - pulse @irq if enabled and update
  * GERROR register in case of GERROR interrupt
  *
@@ -1529,20 +1585,6 @@ static void smmuv3_invalidate_nested_ste(SMMUSIDRange *sid_range)
     }
 }
 
-/**
- * SMMUCommandBatch - batch of commands to issue for nested SMMU invalidation
- * @cmds: Pointer to list of commands
- * @cons: Pointer to list of CONS corresponding to the commands
- * @ncmds: Total ncmds in the batch
- * @dev_cache: Issue to a device cache
- */
-typedef struct SMMUCommandBatch {
-    Cmd *cmds;
-    uint32_t *cons;
-    uint32_t ncmds;
-    bool dev_cache;
-} SMMUCommandBatch;
-
 /* Update batch->ncmds to the number of execute cmds */
 static int smmuv3_issue_cmd_batch(SMMUState *bs, SMMUCommandBatch *batch)
 {
@@ -2298,6 +2340,41 @@ static const VMStateDescription vmstate_smmuv3_queue = {
     },
 };
 
+static int smmuv3_post_load(void *opaque, int version_id)
+{
+    SMMUv3State *s = opaque;
+    SMMUState *bs = ARM_SMMU(s);
+    SMMUDevice *sdev;
+    uint32_t sid;
+
+    /*
+     * ToDo: This will only work if the destination has the same
+     * sid as source. We probably need to enforce it somehow.
+     */
+    QLIST_FOREACH(sdev, &bs->viommu->device_list, next) {
+        sid = smmu_get_sid(sdev);
+        smmuv3_flush_config(sdev);
+        smmuv3_install_nested_ste(sdev, sid);
+    }
+    return 0;
+}
+
+static int smmuv3_post_save(void *opaque)
+{
+    SMMUv3State *s = opaque;
+    SMMUDevice *sdev;
+    uint32_t sid;
+    SMMUState *bs = ARM_SMMU(s);
+
+    QLIST_FOREACH(sdev, &bs->viommu->device_list, next) {
+        sid = smmu_get_sid(sdev);
+        smmuv3_issue_cmd(bs, SMMU_CMD_CFGI_CD_ALL, sid);
+    }
+
+    smmuv3_issue_cmd(bs, SMMU_CMD_TLBI_NH_ALL, 0);
+    return 0;
+}
+
 static bool smmuv3_gbpa_needed(void *opaque)
 {
     SMMUv3State *s = opaque;
@@ -2322,6 +2399,8 @@ static const VMStateDescription vmstate_smmuv3 = {
     .version_id = 1,
     .minimum_version_id = 1,
     .priority = MIG_PRI_IOMMU,
+    .post_load = smmuv3_post_load,
+    .post_save = smmuv3_post_save,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(features, SMMUv3State),
         VMSTATE_UINT8(sid_size, SMMUv3State),
