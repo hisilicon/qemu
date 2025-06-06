@@ -11,16 +11,36 @@
 
 #include "hw/arm/smmuv3.h"
 #include "hw/arm/smmu-common.h"
+#include "system/iommufd.h"
+#include <linux/iommufd.h>
 #include CONFIG_DEVICES
+
+typedef struct SMMUS2Hwpt {
+    IOMMUFDBackend *iommufd;
+    uint32_t hwpt_id;
+} SMMUS2Hwpt;
+
+typedef struct SMMUViommu {
+    IOMMUFDBackend *iommufd;
+    IOMMUFDViommu core;
+    SMMUS2Hwpt *s2_hwpt;
+    uint32_t bypass_hwpt_id;
+    uint32_t abort_hwpt_id;
+    QLIST_HEAD(, SMMUv3AccelDevice) device_list;
+} SMMUViommu;
 
 typedef struct SMMUv3AccelDevice {
     SMMUDevice  sdev;
     AddressSpace as_sysmem;
+    HostIOMMUDeviceIOMMUFD *idev;
+    SMMUViommu *viommu;
+    QLIST_ENTRY(SMMUv3AccelDevice) next;
 } SMMUv3AccelDevice;
 
 typedef struct SMMUv3AccelState {
     MemoryRegion root;
     MemoryRegion sysmem;
+    SMMUViommu *viommu;
 } SMMUv3AccelState;
 
 #if defined(CONFIG_ARM_SMMUV3) && defined(CONFIG_IOMMUFD)
