@@ -29,10 +29,16 @@ typedef struct SMMUViommu {
     QLIST_HEAD(, SMMUv3AccelDevice) device_list;
 } SMMUViommu;
 
+typedef struct SMMUS1Hwpt {
+    IOMMUFDBackend *iommufd;
+    uint32_t hwpt_id;
+} SMMUS1Hwpt;
+
 typedef struct SMMUv3AccelDevice {
     SMMUDevice  sdev;
     AddressSpace as_sysmem;
     HostIOMMUDeviceIOMMUFD *idev;
+    SMMUS1Hwpt  *s1_hwpt;
     SMMUViommu *viommu;
     QLIST_ENTRY(SMMUv3AccelDevice) next;
 } SMMUv3AccelDevice;
@@ -45,8 +51,19 @@ typedef struct SMMUv3AccelState {
 
 #if defined(CONFIG_ARM_SMMUV3) && defined(CONFIG_IOMMUFD)
 void smmuv3_accel_init(SMMUv3State *s);
+void smmuv3_accel_install_nested_ste(SMMUState *bs, SMMUDevice *sdev, int sid);
+void smmuv3_accel_install_nested_ste_range(SMMUState *bs,
+                                           SMMUSIDRange *range);
 #else
 static inline void smmuv3_accel_init(SMMUv3State *d)
+{
+}
+static inline void
+smmuv3_accel_install_nested_ste(SMMUState *bs, SMMUDevice *sdev, int sid)
+{
+}
+static inline void
+smmuv3_accel_install_nested_ste_range(SMMUState *bs, SMMUSIDRange *range)
 {
 }
 #endif
