@@ -44,6 +44,11 @@ typedef struct IOMMUFDViommu {
     uint32_t viommu_id;
 } IOMMUFDViommu;
 
+typedef struct IOMMUFDVdev {
+    uint32_t vdev_id;
+    uint32_t dev_id;
+} IOMMUFDVdev;
+
 bool iommufd_backend_connect(IOMMUFDBackend *be, Error **errp);
 void iommufd_backend_disconnect(IOMMUFDBackend *be);
 

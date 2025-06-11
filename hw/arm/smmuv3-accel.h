@@ -40,6 +40,7 @@ typedef struct SMMUv3AccelDevice {
     HostIOMMUDeviceIOMMUFD *idev;
     SMMUS1Hwpt  *s1_hwpt;
     SMMUViommu *viommu;
+    IOMMUFDVdev  *vdev;
     QLIST_ENTRY(SMMUv3AccelDevice) next;
 } SMMUv3AccelDevice;
 
