@@ -162,6 +162,7 @@ struct SMMUState {
     uint8_t bus_num;
     PCIBus *primary_bus;
     bool smmu_per_bus; /* SMMU is specific to the primary_bus */
+    bool accel; /* SMMU has accelerator support */
 };
 
 struct SMMUBaseClass {
@@ -177,6 +178,8 @@ struct SMMUBaseClass {
 
 #define TYPE_ARM_SMMU "arm-smmu"
 OBJECT_DECLARE_TYPE(SMMUState, SMMUBaseClass, ARM_SMMU)
+
+#define TYPE_ARM_SMMUV3_ACCEL "arm-smmuv3-accel"
 
 /* Return the SMMUPciBus handle associated to a PCI bus number */
 SMMUPciBus *smmu_find_smmu_pcibus(SMMUState *s, uint8_t bus_num);

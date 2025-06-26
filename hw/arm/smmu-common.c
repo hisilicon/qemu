@@ -938,7 +938,11 @@ static const PCIIOMMUOps *smmu_iommu_ops_by_type(SMMUState *s)
 {
     SMMUBaseClass *sbc;
 
-    sbc = ARM_SMMU_CLASS(object_class_by_name(TYPE_ARM_SMMU));
+    if (s->accel) {
+        sbc = ARM_SMMU_CLASS(object_class_by_name(TYPE_ARM_SMMUV3_ACCEL));
+    } else {
+        sbc = ARM_SMMU_CLASS(object_class_by_name(TYPE_ARM_SMMU));
+    }
     assert(sbc->iommu_ops);
 
     return sbc->iommu_ops;
