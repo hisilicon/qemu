@@ -63,6 +63,7 @@ struct SMMUv3State {
     qemu_irq     irq[4];
     QemuMutex mutex;
     char *stage;
+    struct SMMUv3AccelState  *s_accel;
 };
 
 typedef enum {
