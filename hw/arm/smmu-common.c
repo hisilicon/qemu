@@ -934,6 +934,16 @@ void smmu_inv_notifiers_all(SMMUState *s)
     }
 }
 
+static const PCIIOMMUOps *smmu_iommu_ops_by_type(SMMUState *s)
+{
+    SMMUBaseClass *sbc;
+
+    sbc = ARM_SMMU_CLASS(object_class_by_name(TYPE_ARM_SMMU));
+    assert(sbc->iommu_ops);
+
+    return sbc->iommu_ops;
+}
+
 static void smmu_base_realize(DeviceState *dev, Error **errp)
 {
     SMMUState *s = ARM_SMMU(dev);
@@ -962,6 +972,7 @@ static void smmu_base_realize(DeviceState *dev, Error **errp)
      */
     if (pci_bus_is_express(pci_bus) && pci_bus_is_root(pci_bus) &&
         object_dynamic_cast(OBJECT(pci_bus)->parent, TYPE_PCI_HOST_BRIDGE)) {
+        const PCIIOMMUOps  *iommu_ops;
         /*
          * This condition matches either the default pcie.0, pxb-pcie, or
          * pxb-cxl. For both pxb-pcie and pxb-cxl, parent_dev will be set.
@@ -974,10 +985,11 @@ static void smmu_base_realize(DeviceState *dev, Error **errp)
             }
         }
 
+        iommu_ops = smmu_iommu_ops_by_type(s);
         if (s->smmu_per_bus) {
-            pci_setup_iommu_per_bus(pci_bus, &smmu_ops, s);
+            pci_setup_iommu_per_bus(pci_bus, iommu_ops, s);
         } else {
-            pci_setup_iommu(pci_bus, &smmu_ops, s);
+            pci_setup_iommu(pci_bus, iommu_ops, s);
         }
         return;
     }
@@ -1018,6 +1030,7 @@ static void smmu_base_class_init(ObjectClass *klass, const void *data)
     device_class_set_parent_realize(dc, smmu_base_realize,
                                     &sbc->parent_realize);
     rc->phases.exit = smmu_base_reset_exit;
+    sbc->iommu_ops = &smmu_ops;
 }
 
 static const TypeInfo smmu_base_info = {

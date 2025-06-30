@@ -171,6 +171,7 @@ struct SMMUBaseClass {
     /*< public >*/
 
     DeviceRealize parent_realize;
+    const PCIIOMMUOps *iommu_ops;
 
 };
 
