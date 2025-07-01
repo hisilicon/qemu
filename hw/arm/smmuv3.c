@@ -1285,10 +1285,17 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
     SMMUCmdError cmd_error = SMMU_CERROR_NONE;
     SMMUQueue *q = &s->cmdq;
     SMMUCommandType type = 0;
+    SMMUCommandBatch batch = {};
+    uint32_t ncmds;
 
     if (!smmuv3_cmdq_enabled(s)) {
         return 0;
     }
+
+    ncmds = smmuv3_q_ncmds(q);
+    batch.cmds = g_new0(Cmd, ncmds);
+    batch.cons = g_new0(uint32_t, ncmds);
+
     /*
      * some commands depend on register values, typically CR0. In case those
      * register values change while handling the command, spec says it
@@ -1383,6 +1390,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
 
             trace_smmuv3_cmdq_cfgi_cd(sid);
             smmuv3_flush_config(sdev);
+            smmuv3_accel_batch_cmd(sdev->smmu, sdev, &batch, &cmd, &q->cons);
             break;
         }
         case SMMU_CMD_TLBI_NH_ASID:
@@ -1406,6 +1414,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nh_asid(asid);
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_asid_vmid(bs, asid, vmid);
+            smmuv3_accel_batch_cmd(bs, NULL, &batch, &cmd, &q->cons);
             break;
         }
         case SMMU_CMD_TLBI_NH_ALL:
@@ -1433,6 +1442,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
             trace_smmuv3_cmdq_tlbi_nsnh();
             smmu_inv_notifiers_all(&s->smmu_state);
             smmu_iotlb_inv_all(bs);
+            smmuv3_accel_batch_cmd(bs, NULL, &batch, &cmd, &q->cons);
             break;
         case SMMU_CMD_TLBI_NH_VAA:
         case SMMU_CMD_TLBI_NH_VA:
@@ -1441,6 +1451,7 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
                 break;
             }
             smmuv3_range_inval(bs, &cmd, SMMU_STAGE_1);
+            smmuv3_accel_batch_cmd(bs, NULL, &batch, &cmd, &q->cons);
             break;
         case SMMU_CMD_TLBI_S12_VMALL:
         {
@@ -1499,12 +1510,29 @@ static int smmuv3_cmdq_consume(SMMUv3State *s)
         queue_cons_incr(q);
     }
 
+    qemu_mutex_lock(&s->mutex);
+    if (!cmd_error && batch.ncmds) {
+        if (!smmuv3_accel_issue_cmd_batch(bs, &batch)) {
+            if (batch.ncmds) {
+                q->cons = batch.cons[batch.ncmds - 1];
+            } else {
+                q->cons = batch.cons[0]; /* FIXME: Check */
+            }
+            qemu_log_mask(LOG_GUEST_ERROR, "Illegal command type: %d\n",
+                          CMD_TYPE(&batch.cmds[batch.ncmds]));
+            cmd_error = SMMU_CERROR_ILL;
+        }
+    }
+    qemu_mutex_unlock(&s->mutex);
+
     if (cmd_error) {
         trace_smmuv3_cmdq_consume_error(smmu_cmd_string(type), cmd_error);
         smmu_write_cmdq_err(s, cmd_error);
         smmuv3_trigger_irq(s, SMMU_IRQ_GERROR, R_GERROR_CMDQ_ERR_MASK);
     }
 
+    g_free(batch.cmds);
+    g_free(batch.cons);
     trace_smmuv3_cmdq_consume_out(Q_PROD(q), Q_CONS(q),
                                   Q_PROD_WRAP(q), Q_CONS_WRAP(q));
 
