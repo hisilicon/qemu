@@ -168,6 +168,71 @@ smmuv3_accel_install_nested_ste_range(SMMUState *bs, SMMUSIDRange *range)
     g_hash_table_foreach(bs->configs, smmuv3_accel_ste_range, range);
 }
 
+/* Update batch->ncmds to the number of execute cmds */
+bool smmuv3_accel_issue_cmd_batch(SMMUState *bs, SMMUCommandBatch *batch)
+{
+    SMMUv3State *s = ARM_SMMUV3(bs);
+    SMMUv3AccelState *s_accel = s->s_accel;
+    uint32_t total = batch->ncmds;
+    IOMMUFDViommu *viommu_core;
+    int ret;
+
+    if (!bs->accel) {
+        return true;
+    }
+
+    if (!s_accel->viommu) {
+        return true;
+    }
+
+    viommu_core = &s_accel->viommu->core;
+    ret = iommufd_backend_invalidate_cache(viommu_core->iommufd,
+                                           viommu_core->viommu_id,
+                                           IOMMU_VIOMMU_INVALIDATE_DATA_ARM_SMMUV3,
+                                           sizeof(Cmd), &batch->ncmds,
+                                           batch->cmds, NULL);
+    if (!ret || total != batch->ncmds) {
+        error_report("%s failed: ret=%d, total=%d, done=%d",
+                      __func__, ret, total, batch->ncmds);
+        return ret;
+    }
+
+    batch->ncmds = 0;
+    return ret;
+}
+
+/*
+ * Note: sdev can be NULL for certain invalidation commands
+ * e.g., SMMU_CMD_TLBI_NH_ASID, SMMU_CMD_TLBI_NH_VA etc.
+ */
+void smmuv3_accel_batch_cmd(SMMUState *bs, SMMUDevice *sdev,
+                           SMMUCommandBatch *batch, Cmd *cmd,
+                           uint32_t *cons)
+{
+    if (!bs->accel) {
+        return;
+    }
+
+   /*
+    * We may end up here for any emulated PCI bridge or root port type
+    * devices. The batching of commands only matters for vfio-pci endpoint
+    * devices with Guest S1 translation enabled. Hence check that, if
+    * sdev is available.
+    */
+    if (sdev) {
+        SMMUv3AccelDevice *accel_dev;
+        accel_dev = container_of(sdev, SMMUv3AccelDevice, sdev);
+
+        if (!accel_dev->s1_hwpt) {
+            return;
+        }
+    }
+
+    batch->cmds[batch->ncmds] = *cmd;
+    batch->cons[batch->ncmds++] = *cons;
+    return;
+}
+
 static SMMUv3AccelDevice *smmuv3_accel_get_dev(SMMUState *bs, SMMUPciBus *sbus,
                                                 PCIBus *bus, int devfn)
 {

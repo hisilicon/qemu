@@ -547,6 +547,18 @@ typedef struct CD {
     uint32_t word[16];
 } CD;
 
+/*
+ * SMMUCommandBatch - batch of invalidation commands for accel smmuv3
+ * @cmds: Pointer to list of commands
+ * @cons: Pointer to list of CONS corresponding to the commands
+ * @ncmds: Number of cmds in the batch
+ */
+typedef struct SMMUCommandBatch {
+    struct Cmd *cmds;
+    uint32_t *cons;
+    uint32_t ncmds;
+} SMMUCommandBatch;
+
 int smmu_find_ste(SMMUv3State *s, uint32_t sid, STE *ste,
                   SMMUEventInfo *event);
 void smmuv3_flush_config(SMMUDevice *sdev);

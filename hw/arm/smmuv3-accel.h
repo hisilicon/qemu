@@ -13,6 +13,7 @@
 #include "hw/arm/smmu-common.h"
 #include "system/iommufd.h"
 #include <linux/iommufd.h>
+#include "smmuv3-internal.h"
 #include CONFIG_DEVICES
 
 typedef struct SMMUS2Hwpt {
@@ -55,6 +56,10 @@ void smmuv3_accel_init(SMMUv3State *s);
 void smmuv3_accel_install_nested_ste(SMMUState *bs, SMMUDevice *sdev, int sid);
 void smmuv3_accel_install_nested_ste_range(SMMUState *bs,
                                            SMMUSIDRange *range);
+bool smmuv3_accel_issue_cmd_batch(SMMUState *bs, SMMUCommandBatch *batch);
+void smmuv3_accel_batch_cmd(SMMUState *bs, SMMUDevice *sdev,
+                           SMMUCommandBatch *batch, struct Cmd *cmd,
+                           uint32_t *cons);
 #else
 static inline void smmuv3_accel_init(SMMUv3State *d)
 {
@@ -66,6 +71,17 @@ smmuv3_accel_install_nested_ste(SMMUState *bs, SMMUDevice *sdev, int sid)
 static inline void
 smmuv3_accel_install_nested_ste_range(SMMUState *bs, SMMUSIDRange *range)
 {
+}
+static inline bool smmuv3_accel_issue_cmd_batch(SMMUState *bs,
+                                               SMMUCommandBatch *batch)
+{
+    return true;
+}
+static inline void smmuv3_accel_batch_cmd(SMMUState *bs, SMMUDevice *sdev,
+                                          SMMUCommandBatch *batch,
+                                          struct Cmd *cmd, uint32_t *cons)
+{
+    return;
 }
 #endif
 
