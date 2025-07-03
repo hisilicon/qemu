@@ -1022,6 +1022,7 @@ static const Property smmu_dev_properties[] = {
     DEFINE_PROP_BOOL("smmu_per_bus", SMMUState, smmu_per_bus, false),
     DEFINE_PROP_LINK("primary-bus", SMMUState, primary_bus,
                      TYPE_PCI_BUS, PCIBus *),
+    DEFINE_PROP_BOOL("accel", SMMUState, accel, false),
 };
 
 static void smmu_base_class_init(ObjectClass *klass, const void *data)
