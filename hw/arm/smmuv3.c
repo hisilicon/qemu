@@ -1894,6 +1894,7 @@ static void smmu_init_irq(SMMUv3State *s, SysBusDevice *dev)
  */
 static void smmu_reset_exit(Object *obj, ResetType type)
 {
+    SMMUState *sys = ARM_SMMU(obj);
     SMMUv3State *s = ARM_SMMUV3(obj);
     SMMUv3Class *c = ARM_SMMUV3_GET_CLASS(s);
 
@@ -1903,6 +1904,9 @@ static void smmu_reset_exit(Object *obj, ResetType type)
     }
 
     smmuv3_init_regs(s);
+    if (sys->accel) {
+        smmuv3_accel_init_regs(s);
+    }
 }
 
 static void smmu_realize(DeviceState *d, Error **errp)

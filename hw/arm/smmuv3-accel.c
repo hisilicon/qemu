@@ -23,6 +23,109 @@
 #define SMMU_STE_VALID      (1ULL << 0)
 #define SMMU_STE_CFG_BYPASS (1ULL << 3)
 
+static int
+smmuv3_accel_host_hw_info(SMMUv3AccelDevice *accel_dev, uint32_t *data_type,
+                          uint32_t data_len, void *data)
+{
+    uint64_t caps;
+
+    if (!accel_dev || !accel_dev->idev) {
+        return -ENOENT;
+    }
+
+    return !iommufd_backend_get_device_info(accel_dev->idev->iommufd,
+                                            accel_dev->idev->devid,
+                                            data_type, data,
+                                            data_len, &caps, NULL);
+}
+
+void smmuv3_accel_init_regs(SMMUv3State *s)
+{
+    SMMUv3AccelState *s_accel = s->s_accel;
+    SMMUv3AccelDevice *accel_dev;
+    uint32_t data_type;
+    uint32_t val;
+    int ret;
+
+    if (s_accel->info.idr[0]) {
+        /* We already got this */
+        return;
+    }
+
+    if (!s_accel->viommu || QLIST_EMPTY(&s_accel->viommu->device_list)) {
+        error_report("For arm-smmuv3,accel=on case, atleast one cold-plugged "
+                     "vfio-pci dev needs to be assigned");
+        goto out_err;
+    }
+
+    accel_dev = QLIST_FIRST(&s_accel->viommu->device_list);
+    ret = smmuv3_accel_host_hw_info(accel_dev, &data_type,
+                                    sizeof(s_accel->info), &s_accel->info);
+    if (ret) {
+        error_report("Failed to get Host SMMU device info");
+        goto out_err;
+    }
+
+    if (data_type != IOMMU_HW_INFO_TYPE_ARM_SMMUV3) {
+        error_report("Wrong data type (%d) for Host SMMU device info",
+                     data_type);
+        goto out_err;
+    }
+
+    trace_smmuv3_accel_host_hw_info(s_accel->info.idr[0], s_accel->info.idr[1],
+                                    s_accel->info.idr[3], s_accel->info.idr[5]);
+    /*
+     * QEMU SMMUv3 supports both linear and 2-level stream tables. If host
+     * SMMUv3 supports only linear stream table, report that to Guest.
+     */
+    val = FIELD_EX32(s_accel->info.idr[0], IDR0, STLEVEL);
+    if (val < FIELD_EX32(s->idr[0], IDR0, STLEVEL)) {
+        s->idr[0] = FIELD_DP32(s->idr[0], IDR0, STLEVEL, val);
+    }
+
+    /*
+     * QEMU SMMUv3 supports little-endian support for translation table walks.
+     * If host SMMUv3 supports only big-endian, report error.
+     */
+    val = FIELD_EX32(s_accel->info.idr[0], IDR0, TTENDIAN);
+    if (val > FIELD_EX32(s->idr[0], IDR0, TTENDIAN)) {
+        error_report("Host SUUMU device translation table walk endianess "
+                     "not supported");
+        goto out_err;
+    }
+
+    /*
+     * QEMU SMMUv3 supports AArch64 Translation table format.
+     * If host SMMUv3 supports only AArch32, report error.
+     */
+    val = FIELD_EX32(s_accel->info.idr[0], IDR0, TTF);
+    if (val < FIELD_EX32(s->idr[0], IDR0, TTF)) {
+        error_report("Host SMMU device Translation table format not supported");
+        goto out_err;
+    }
+
+    /*
+     * QEMU SMMUv3 supports 4K/16K/64K translation granules. If host SMMUv3
+     * does't support any of these, report the supported ones only to Guest.
+     */
+    val = FIELD_EX32(s_accel->info.idr[5], IDR5, GRAN4K);
+    if (val < FIELD_EX32(s->idr[5], IDR5, GRAN4K)) {
+        s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN4K, val);
+    }
+    val = FIELD_EX32(s_accel->info.idr[5], IDR5, GRAN16K);
+    if (val < FIELD_EX32(s->idr[5], IDR5, GRAN16K)) {
+        s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN16K, val);
+    }
+    val = FIELD_EX32(s_accel->info.idr[5], IDR5, GRAN64K);
+    if (val < FIELD_EX32(s->idr[5], IDR5, GRAN64K)) {
+        s->idr[5] = FIELD_DP32(s->idr[5], IDR5, GRAN64K, val);
+    }
+    return;
+
+out_err:
+    exit(1);
+}
+
 static void
 smmuv3_accel_dev_uninstall_nested_ste(SMMUv3AccelDevice *accel_dev, bool abort)
 {

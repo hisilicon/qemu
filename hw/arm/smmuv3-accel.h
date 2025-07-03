@@ -49,6 +49,7 @@ typedef struct SMMUv3AccelState {
     MemoryRegion root;
     MemoryRegion sysmem;
     SMMUViommu *viommu;
+    struct iommu_hw_info_arm_smmuv3 info;
 } SMMUv3AccelState;
 
 #if defined(CONFIG_ARM_SMMUV3) && defined(CONFIG_IOMMUFD)
@@ -60,6 +61,7 @@ bool smmuv3_accel_issue_cmd_batch(SMMUState *bs, SMMUCommandBatch *batch);
 void smmuv3_accel_batch_cmd(SMMUState *bs, SMMUDevice *sdev,
                            SMMUCommandBatch *batch, struct Cmd *cmd,
                            uint32_t *cons);
+void smmuv3_accel_init_regs(SMMUv3State *s);
 #else
 static inline void smmuv3_accel_init(SMMUv3State *d)
 {
@@ -82,6 +84,9 @@ static inline void smmuv3_accel_batch_cmd(SMMUState *bs, SMMUDevice *sdev,
                                           struct Cmd *cmd, uint32_t *cons)
 {
     return;
+}
+static inline void smmuv3_accel_init_regs(SMMUv3State *s)
+{
 }
 #endif
 
