@@ -10,6 +10,7 @@
 #include "qemu/error-report.h"
 
 #include "hw/arm/smmuv3.h"
+#include "hw/iommu.h"
 #include "hw/pci/pci_bridge.h"
 #include "hw/pci-host/gpex.h"
 #include "hw/vfio/pci.h"
@@ -81,8 +82,22 @@ static AddressSpace *smmuv3_accel_find_add_as(PCIBus *bus, void *opaque,
     }
 }
 
+static uint64_t smmuv3_accel_get_viommu_cap(void *opaque)
+{
+    /*
+     * Accelerated smmuv3 support only allowes Guest S1
+     * configuration. Hence report VIOMMU_CAP_STAGE1
+     * so that VFIO can create nested parent domain.
+     * The real nested support should be reported from host
+     * SMMUv3 and if it doesn't, the nested parent allocation
+     * will fail anyway.
+     */
+    return VIOMMU_CAP_STAGE1;
+}
+
 static const PCIIOMMUOps smmuv3_accel_ops = {
     .get_address_space = smmuv3_accel_find_add_as,
+    .get_viommu_cap = smmuv3_accel_get_viommu_cap,
 };
 
 void smmuv3_accel_init(SMMUv3State *s)

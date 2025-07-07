@@ -3053,6 +3053,18 @@ static void virt_machine_device_plug_cb(HotplugHandler *hotplug_dev,
                 return;
             }
 
+            if (object_property_get_bool(OBJECT(dev), "accel", &error_abort)) {
+                char *stage;
+
+                stage = object_property_get_str(OBJECT(dev), "stage",
+                                                &error_fatal);
+                if (*stage && strcmp("1", stage)) {
+                    error_setg(errp, "Only stage1 is supported for SMMUV3 with "
+                               "accel=on");
+                    return;
+                }
+            }
+
             create_smmuv3_dev_dtb(vms, dev, bus);
         }
     }
