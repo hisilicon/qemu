@@ -2225,7 +2225,9 @@ int kvm_arch_init_vcpu(CPUState *cs)
     /* overwrite writable ID regs with their updated property values */
     kvm_arm_writable_idregs_to_cpreg_list(cpu);
 
-    write_list_to_kvmstate(cpu, 3);
+    if (!write_list_to_kvmstate(cpu, 3)) {
+        return -EINVAL;
+    }
 
     return 0;
 }
