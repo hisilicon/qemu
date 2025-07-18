@@ -106,6 +106,28 @@ END {
 	if (__current_block_depth != 0)
 		fatal("Missing terminator for " block_current() " block")
 
+	# Manually add MIDR/REVIDR/AIDR
+	print ""
+	print "    /* MIDR_EL1 */"
+	print "    ARM64SysReg *MIDR_EL1 = arm64_sysreg_get(MIDR_EL1_IDX);"
+	print "    MIDR_EL1->name = \"MIDR_EL1\";"
+	print "    arm64_sysreg_add_field(MIDR_EL1, \"Implementer\", 24, 31);"
+	print "    arm64_sysreg_add_field(MIDR_EL1, \"Variant\", 20, 23);"
+	print "    arm64_sysreg_add_field(MIDR_EL1, \"Architecture\", 16, 19);"
+	print "    arm64_sysreg_add_field(MIDR_EL1, \"PartNum\", 4, 15);"
+	print "    arm64_sysreg_add_field(MIDR_EL1, \"Revision\", 0, 3);"
+	print ""
+	print "    /* REVIDR_EL1 */"
+	print "    ARM64SysReg *REVIDR_EL1 = arm64_sysreg_get(REVIDR_EL1_IDX);"
+	print "    REVIDR_EL1->name = \"REVIDR_EL1\";"
+	print "    arm64_sysreg_add_field(REVIDR_EL1, \"IMPDEF\", 0, 63);"
+	print ""
+	print "    /* AIDR_EL1 */"
+	print "    ARM64SysReg *AIDR_EL1 = arm64_sysreg_get(AIDR_EL1_IDX);"
+	print "    AIDR_EL1->name = \"AIDR_EL1\";"
+	print "    arm64_sysreg_add_field(AIDR_EL1, \"IMPDEF\", 0, 63);"
+	print ""
+
 	print "}"
 }
 

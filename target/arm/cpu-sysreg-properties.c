@@ -710,4 +710,22 @@ void initialize_cpu_sysreg_properties(void)
 
 /* For S2PIR_EL2 fields see PIRx_ELx */
 
+    /* MIDR_EL1 */
+    ARM64SysReg *MIDR_EL1 = arm64_sysreg_get(MIDR_EL1_IDX);
+    MIDR_EL1->name = "MIDR_EL1";
+    arm64_sysreg_add_field(MIDR_EL1, "Implementer", 24, 31);
+    arm64_sysreg_add_field(MIDR_EL1, "Variant", 20, 23);
+    arm64_sysreg_add_field(MIDR_EL1, "Architecture", 16, 19);
+    arm64_sysreg_add_field(MIDR_EL1, "PartNum", 4, 15);
+    arm64_sysreg_add_field(MIDR_EL1, "Revision", 0, 3);
+
+    /* REVIDR_EL1 */
+    ARM64SysReg *REVIDR_EL1 = arm64_sysreg_get(REVIDR_EL1_IDX);
+    REVIDR_EL1->name = "REVIDR_EL1";
+    arm64_sysreg_add_field(REVIDR_EL1, "IMPDEF", 0, 63);
+
+    /* AIDR_EL1 */
+    ARM64SysReg *AIDR_EL1 = arm64_sysreg_get(AIDR_EL1_IDX);
+    AIDR_EL1->name = "AIDR_EL1";
+    arm64_sysreg_add_field(AIDR_EL1, "IMPDEF", 0, 63);
 }

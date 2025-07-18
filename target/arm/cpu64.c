@@ -54,7 +54,7 @@ int get_sysreg_idx(ARMSysRegs sysreg)
     switch (sysreg) {
 #include "cpu-sysregs.h.inc"
     }
-    g_assert_not_reached();
+    return -1;
 }
 
 #undef DEF

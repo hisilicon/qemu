@@ -7,7 +7,10 @@
 BEGIN {
     print ""
 } END {
-    print ""
+    /* add MIDR, REVIDR, and AIDR */
+    print "DEF(MIDR_EL1, 3, 0, 0, 0, 0)"
+    print "DEF(REVIDR_EL1, 3, 0, 0, 0, 6)"
+    print "DEF(AIDR_EL1, 3, 1, 0, 0, 7)"
 }
 
 # skip blank lines and comment lines
