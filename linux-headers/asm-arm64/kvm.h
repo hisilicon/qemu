@@ -382,6 +382,57 @@ enum {
 	KVM_REG_ARM_VENDOR_HYP_BIT_DISCOVER_IMPL_CPUS	= 1,
 };
 
+
+/*
+ * KVM/arm64-specific hypercalls which may be exposed by KVM/arm64 to guest
+ * operating systems and managed by VMM.
+ * ToDo: Check this is the right place for these definitions or we need a
+ * separate uapi header for this.
+ */
+#define ARM_SMCCC_FAST_CALL             _AC(1,U)
+#define ARM_SMCCC_TYPE_SHIFT            31
+
+#define ARM_SMCCC_SMC_32                0
+#define ARM_SMCCC_SMC_64                1
+#define ARM_SMCCC_CALL_CONV_SHIFT       30
+
+#define ARM_SMCCC_OWNER_MASK            0x3F
+#define ARM_SMCCC_OWNER_SHIFT           24
+
+#define ARM_SMCCC_FUNC_MASK             0xFFFF
+
+#define ARM_SMCCC_OWNER_VENDOR_HYP      6
+
+#define ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_VER    64
+#define ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_CPUS   65
+
+#define ARM_SMCCC_CALL_VAL(type, calling_convention, owner, func_num) \
+        (((type) << ARM_SMCCC_TYPE_SHIFT) | \
+        ((calling_convention) << ARM_SMCCC_CALL_CONV_SHIFT) | \
+        (((owner) & ARM_SMCCC_OWNER_MASK) << ARM_SMCCC_OWNER_SHIFT) | \
+        ((func_num) & ARM_SMCCC_FUNC_MASK))
+
+#define ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_VER_FUNC_ID              \
+        ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,                         \
+                           ARM_SMCCC_SMC_64,                            \
+                           ARM_SMCCC_OWNER_VENDOR_HYP,                  \
+                           ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_VER)
+
+#define ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_CPUS_FUNC_ID             \
+        ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,                         \
+                           ARM_SMCCC_SMC_64,                            \
+                           ARM_SMCCC_OWNER_VENDOR_HYP,                  \
+                           ARM_SMCCC_KVM_FUNC_DISCOVER_IMPL_CPUS)
+/*
+ * Return codes defined in ARM DEN 0070A
+ * ARM DEN 0070A is now merged/consolidated into ARM DEN 0028 C
+ */
+
+#define SMCCC_RET_SUCCESS                       0
+#define SMCCC_RET_NOT_SUPPORTED                 -1
+#define SMCCC_RET_NOT_REQUIRED                  -2
+#define SMCCC_RET_INVALID_PARAMETER             -3
+
 /* Device Control API on vm fd */
 #define KVM_ARM_VM_SMCCC_CTRL		0
 #define   KVM_ARM_VM_SMCCC_FILTER	0
