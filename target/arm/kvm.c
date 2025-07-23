@@ -66,6 +66,9 @@ typedef struct ARMHostCPUFeatures {
 
 static ARMHostCPUFeatures arm_host_cpu_features;
 
+static uint64_t target_impl_cpus_num;
+static ArmTargetImplCPU *target_impl_cpus;
+
 /**
  * kvm_arm_vcpu_init:
  * @cpu: ARMCPU
@@ -2815,4 +2818,17 @@ void kvm_arm_enable_mte(Object *cpuobj, Error **errp)
     if (succeeded_to_enable) {
         cpu->kvm_mte = true;
     }
+}
+
+bool kvm_arm_set_target_impl_cpus(uint64_t num, ArmTargetImplCPU *cpus)
+{
+
+    if (target_impl_cpus_num) {
+        return false;
+    }
+
+    target_impl_cpus_num = num;
+    target_impl_cpus = cpus;
+
+    return true;
 }

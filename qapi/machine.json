@@ -1898,3 +1898,37 @@
 { 'command': 'x-query-interrupt-controllers',
   'returns': 'HumanReadableText',
   'features': [ 'unstable' ]}
+
+##
+# @ArmTargetImplCPU:
+#
+# Info for a single target implementation CPU.
+#
+# @midr: MIDR value
+# @revidr: REVIDR value
+# @aidr: AIDR value
+#
+# Since: 10.2
+##
+{ 'struct': 'ArmTargetImplCPU',
+  'data': {
+    'midr': 'uint64',
+    'revidr': 'uint64',
+    'aidr': 'uint64'
+  }
+}
+
+##
+# @ArmTargetImplCPUs:
+#
+# List of target implementation CPUs.
+#
+# @target-cpus: List of ArmTargetImplCPU entries.
+#
+# Since: 10.2
+##
+{ 'struct': 'ArmTargetImplCPUs',
+  'data': {
+    'target-cpus': ['ArmTargetImplCPU']
+  }
+}

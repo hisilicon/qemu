@@ -244,6 +244,8 @@ void kvm_arm_enable_mte(Object *cpuobj, Error **errp);
 
 int kvm_arm_get_writable_id_regs(ARMCPU *cpu, IdRegMap *idregmap);
 
+bool kvm_arm_set_target_impl_cpus(uint64_t num, ArmTargetImplCPU *cpus);
+
 #else
 
 /*
@@ -278,6 +280,12 @@ static inline bool kvm_arm_target_impl_cpus_supported(void)
 static inline int kvm_arm_get_writable_id_regs(ARMCPU *cpu, IdRegMap *idregmap)
 {
     return -ENOSYS;
+}
+
+static inline
+bool kvm_arm_set_target_impl_cpus(uint64_t num, ArmTargetImplCPU *cpus)
+{
+    return false;
 }
 
 /*
