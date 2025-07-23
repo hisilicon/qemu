@@ -1697,6 +1697,71 @@ static bool kvm_arm_handle_debug(ARMCPU *cpu,
     return false;
 }
 
+/* Only supports HYP_KVM_DISCOVER_IMPL_XXX hypercalls */
+static void arm_handle_smccc_kvm_vendor_hypercall(ARMCPU *cpu)
+{
+    CPUARMState *env = &cpu->env;
+    uint64_t param[4] = { };
+    uint64_t idx;
+
+    if (!is_a64(env)) {
+        env->regs[0] = SMCCC_RET_NOT_SUPPORTED;
+        return;
+    }
+
+    memcpy(param, env->xregs, sizeof(param));
+
+    switch (param[0]) {
+    case ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_VER_FUNC_ID:
+        if (!target_impl_cpus_num) {
+            env->xregs[0] = SMCCC_RET_NOT_SUPPORTED;
+            return;
+        }
+        env->xregs[0] = SMCCC_RET_SUCCESS;
+        env->xregs[1] = PSCI_VERSION(1, 0);
+        env->xregs[2] = target_impl_cpus_num;
+        break;
+    case ARM_SMCCC_VENDOR_HYP_KVM_DISCOVER_IMPL_CPUS_FUNC_ID:
+        idx = param[1];
+
+        if (!target_impl_cpus_num || idx >= target_impl_cpus_num) {
+            env->xregs[0] = SMCCC_RET_INVALID_PARAMETER;
+            return;
+        }
+
+        env->xregs[0] = SMCCC_RET_SUCCESS;
+        env->xregs[1] = target_impl_cpus[idx].midr;
+        env->xregs[2] = target_impl_cpus[idx].revidr;
+        env->xregs[3] = target_impl_cpus[idx].aidr;
+        break;
+    default:
+        env->xregs[0] = SMCCC_RET_NOT_SUPPORTED;
+    }
+}
+
+static int kvm_arm_handle_hypercall(CPUState *cs, struct kvm_run *run)
+{
+    ARMCPU *cpu = ARM_CPU(cs);
+    CPUARMState *env = &cpu->env;
+
+    kvm_cpu_synchronize_state(cs);
+
+    if (run->hypercall.flags == KVM_HYPERCALL_EXIT_SMC) {
+        cs->exception_index = EXCP_SMC;
+        env->exception.syndrome = syn_aa64_smc(0);
+    } else {
+        cs->exception_index = EXCP_HVC;
+        env->exception.syndrome = syn_aa64_hvc(0);
+    }
+    env->exception.target_el = 1;
+
+    bql_lock();
+    arm_handle_smccc_kvm_vendor_hypercall(cpu);
+    bql_unlock();
+
+    return EXCP_INTERRUPT;
+}
+
 int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
 {
     ARMCPU *cpu = ARM_CPU(cs);
@@ -1712,6 +1777,9 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
         /* External DABT with no valid iss to decode */
         ret = kvm_arm_handle_dabt_nisv(cpu, run->arm_nisv.esr_iss,
                                        run->arm_nisv.fault_ipa);
+        break;
+    case KVM_EXIT_HYPERCALL:
+        ret = kvm_arm_handle_hypercall(cs, run);
         break;
     default:
         qemu_log_mask(LOG_UNIMP, "%s: un-handled exit reason %d\n",
@@ -2212,6 +2280,29 @@ static int kvm_arm_sve_set_vls(ARMCPU *cpu)
     return kvm_set_one_reg(CPU(cpu), KVM_REG_ARM64_SVE_VLS, &vls[0]);
 }
 
+/*
+ * Supported Target Implementation CPU hypercalls:
+ *   KVM_REG_ARM_VENDOR_HYP_BIT_DISCOVER_IMPL_VER   = 0,
+ *   KVM_REG_ARM_VENDOR_HYP_BIT_DISCOVER_IMPL_CPUS  = 1
+ *
+ * Setting these bits advertises the availability of the corresponding
+ * Target Implementation CPU hypercalls to the guest.
+ */
+#define BMAP_2_DISCOVER_IMPL_BITS 0x3ULL
+static int kvm_arm_target_impl_cpus_set_hyp_bmap2(ARMCPU *cpu)
+{
+    uint64_t bmap2;
+    int ret;
+
+    ret = kvm_get_one_reg(CPU(cpu), KVM_REG_ARM_VENDOR_HYP_BMAP_2, &bmap2);
+    if (ret) {
+        return ret;
+    }
+
+    bmap2 |= BMAP_2_DISCOVER_IMPL_BITS;
+    return kvm_set_one_reg(CPU(cpu), KVM_REG_ARM_VENDOR_HYP_BMAP_2, &bmap2);
+}
+
 #define ARM_CPU_ID_MPIDR       3, 0, 0, 0, 5
 
 int kvm_arch_init_vcpu(CPUState *cs)
@@ -2292,6 +2383,14 @@ int kvm_arch_init_vcpu(CPUState *cs)
         return ret;
     }
     cpu->mp_affinity = mpidr & ARM64_AFFINITY_MASK;
+
+    /* Set KVM_REG_ARM_VENDOR_HYP_BMAP_2 if target impl CPUs are required */
+    if (target_impl_cpus_num) {
+        ret = kvm_arm_target_impl_cpus_set_hyp_bmap2(cpu);
+        if (ret) {
+            return ret;
+        }
+    }
 
     ret = kvm_arm_init_cpreg_list(cpu);
     if (ret) {
