@@ -71,6 +71,7 @@
 #include "hw/firmware/smbios.h"
 #include "qapi/visitor.h"
 #include "qapi/qapi-visit-common.h"
+#include "qapi/qapi-visit-machine.h"
 #include "qobject/qlist.h"
 #include "standard-headers/linux/input.h"
 #include "hw/arm/smmuv3.h"
@@ -2232,6 +2233,20 @@ static void machvirt_init(MachineState *machine)
         exit(1);
     }
 
+    if (vms->target_cpus_num) {
+        if (!kvm_enabled()) {
+            error_report("Target Impl CPU requested, but not supported "
+                         "without  KVM");
+            exit(1);
+        }
+
+        if (!kvm_arm_target_impl_cpus_supported()) {
+            error_report("Target Impl CPU requested, but not supported by KVM");
+            exit(1);
+        }
+        kvm_arm_set_target_impl_cpus(vms->target_cpus_num, vms->target_cpus);
+    }
+
     create_fdt(vms);
 
     assert(possible_cpus->len == max_cpus);
@@ -2666,6 +2681,45 @@ static void virt_set_oem_table_id(Object *obj, const char *value,
     strncpy(vms->oem_table_id, value, 8);
 }
 
+static void virt_set_target_impl_cpus(Object *obj, Visitor *v,
+                                       const char *name, void *opaque,
+                                       Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+    ArmTargetImplCPUList *list = NULL;
+    ArmTargetImplCPUList *iter = NULL;
+    ArmTargetImplCPU *target_cpus;
+    uint64_t target_num = 0;
+    int i;
+
+    visit_type_ArmTargetImplCPUList(v, name, &list, errp);
+    if (!list) {
+        return;
+    }
+
+    for (iter = list; iter; iter = iter->next) {
+        target_num++;
+    }
+
+    target_cpus = g_new0(ArmTargetImplCPU, target_num);
+    for (i = 0, iter = list; iter; iter = iter->next, i++) {
+        target_cpus[i].midr = iter->value->midr;
+        target_cpus[i].revidr = iter->value->revidr;
+        target_cpus[i].aidr = iter->value->aidr;
+    }
+    vms->target_cpus_num = target_num;
+    vms->target_cpus = target_cpus;
+    vms->target_cpus_list = list;
+}
+
+static void virt_get_target_impl_cpus(Object *obj, Visitor *v, const char *name,
+                             void *opaque, Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+    ArmTargetImplCPUList **list = &vms->target_cpus_list;
+
+    visit_type_ArmTargetImplCPUList(v, name, list, errp);
+}
 
 bool virt_is_acpi_enabled(VirtMachineState *vms)
 {
@@ -3326,6 +3380,18 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
                                           "Override the default value of field OEM Table ID "
                                           "in ACPI table header."
                                           "The string may be up to 8 bytes in size");
+    object_class_property_add(oc, "impl-cpu", "ArmTargetImplCPU",
+                              virt_get_target_impl_cpus,
+                              virt_set_target_impl_cpus,
+                              NULL, NULL);
+    object_class_property_set_description(oc, "impl-cpu",
+                                          "Describe target implementation CPU in the format: "
+                                          "impl-cpu.0.midr=1,"
+                                          "impl-cpu.0.revidr=1,"
+                                          "impl-cpu.0.aidr=1,"
+                                          "impl-cpu.1.midr=2,"
+                                          "impl-cpu.1.revidr=2,"
+                                          "impl-cpu.1.aidr=2");
 
 }
 

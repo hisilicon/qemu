@@ -180,6 +180,9 @@ struct VirtMachineState {
     char *oem_id;
     char *oem_table_id;
     bool ns_el2_virt_timer_irq;
+    uint64_t target_cpus_num;
+    ArmTargetImplCPU *target_cpus;
+    ArmTargetImplCPUList *target_cpus_list;
 };
 
 #define VIRT_ECAM_ID(high) (high ? VIRT_HIGH_PCIE_ECAM : VIRT_PCIE_ECAM)
